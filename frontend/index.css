@@ -1282,6 +1282,20 @@ summary:focus-visible {
   gap: 0.5rem;
 }
 
+.recommender-card {
+  margin-top: 0.9rem;
+  padding: 1rem;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.03)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  font-size: 0.9rem;
+}
+
 /* Dropzone */
 .dropzone-wrap {
   max-width: 1100px;
@@ -2027,4 +2041,162 @@ summary:focus-visible {
   .note-actions {
     justify-content: flex-end;
   }
+}
+
+.progress-container {
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0.5rem 0;
+}
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #8b5cf6, #ec4899);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+/* ——————————— Weekly Goal Progress Bar ——————————— */
+.goal-progress {
+  margin: 1rem 0;
+}
+
+.goal-bar {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.goal-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #8b5cf6, #ec4899);
+  border-radius: 6px;
+  transition: width 0.8s ease;
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.4);
+}
+
+.goal-text {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.goal-complete {
+  color: #10b981;
+  font-weight: 700;
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0;
+  text-align: center;
+}
+
+.goal-remaining {
+  text-align: center;
+  margin: 0.25rem 0 0;
+}
+
+/* ———————————————————— CHART WRAPPERS (LINE + DOUGHNUT) ———————————————————— */
+.chart-wrapper {
+  position: relative;
+  height: 180px; /* fixed height for the wrapper */
+  width: 100%;
+  margin: 0.75rem 0; /* spacing around the chart */
+}
+.chart-wrapper canvas {
+  max-height: 100% !important; /* canvas fills wrapper but never exceeds it */
+  width: 100% !important;
+}
+
+/* responsive – a bit smaller on tablets / phones */
+@media (max-width: 900px) {
+  .chart-wrapper {
+    height: 150px;
+  }
+}
+@media (max-width: 600px) {
+  .chart-wrapper {
+    height: 130px;
+  }
+}
+
+.todo-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.todo-add {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.todo-add input {
+  flex: 1;
+}
+
+.todo-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.todo-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateX(4px);
+}
+
+.todo-item.completed {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.todo-checkbox {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #10b981;
+}
+
+.todo-text {
+  flex: 1;
+  font-size: 0.95rem;
+}
+
+/* ———————————————————— DOUGHNUT CENTER TEXT (Weekly Goal) ———————————————————— */
+.goal-doughnut-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  line-height: 1;
+}
+.goal-doughnut-value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  background: linear-gradient(90deg, #8b5cf6, #ec4899);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.goal-doughnut-total {
+  font-size: 0.9rem;
+  margin-top: 0.15rem;
 }

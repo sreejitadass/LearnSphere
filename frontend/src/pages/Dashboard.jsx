@@ -9,10 +9,35 @@ import {
   FaPlay,
   FaPause,
   FaStop,
+  FaBullseye as Target,
 } from "react-icons/fa";
 import { Link } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 import axios from "axios";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend,
+} from "chart.js";
+import { Line, Doughnut } from "react-chartjs-2";
+import confetti from "canvas-confetti";
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend
+);
 
 const DB_BASE = import.meta.env.VITE_DB_API || "http://127.0.0.1:3000";
 
@@ -37,6 +62,75 @@ const AffirmationBanner = () => {
   return (
     <div className="dash-banner center">
       <span className="dash-banner-text italic">{pick}</span>
+    </div>
+  );
+};
+
+const StreakRing = ({ days }) => {
+  const radius = 32;
+  const circumference = 2 * Math.PI * radius;
+  const progress = Math.min(days / 30, 1); // 30-day max
+  const strokeDashoffset = circumference - progress * circumference;
+
+  // Trigger confetti on milestones
+  useEffect(() => {
+    if (days > 0 && days % 7 === 0) {
+      confetti({
+        particleCount: 80,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ["#8b5cf6", "#ec4899", "#3b82f6"],
+      });
+    }
+  }, [days]);
+
+  return (
+    <div className="streak-ring-container">
+      <svg width="80" height="80" viewBox="0 0 100 100">
+        <defs>
+          <linearGradient
+            id="streakGradient"
+            x1="0%"
+            y1="0%"
+            x2="100%"
+            y2="100%"
+          >
+            <stop offset="0%" stopColor="#8b5cf6" />
+            <stop offset="100%" stopColor="#ec4899" />
+          </linearGradient>
+        </defs>
+
+        {/* Background ring */}
+        <circle
+          cx="50"
+          cy="50"
+          r={radius}
+          stroke="#333"
+          strokeWidth="8"
+          fill="none"
+        />
+
+        {/* Progress ring */}
+        <circle
+          cx="50"
+          cy="50"
+          r={radius}
+          stroke="url(#streakGradient)"
+          strokeWidth="8"
+          fill="none"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          className="streak-progress-ring"
+          style={{
+            filter: days >= 7 ? "drop-shadow(0 0 8px #8b5cf6)" : "none",
+          }}
+        />
+
+        {/* Center number */}
+        <text x="50" y="55" textAnchor="middle" className="streak-number">
+          {days}
+        </text>
+      </svg>
     </div>
   );
 };
@@ -81,8 +175,6 @@ const StudyTimer = () => {
   const handleStop = () => {
     setIsActive(false);
     setIsPaused(false);
-    // Optionally save session to backend
-    // axios.post(`${DB_BASE}/study-session`, { duration: time, userId: user.id });
   };
 
   const formatTime = (seconds) => {
@@ -163,6 +255,139 @@ const ToDoList = ({ todos, onToggle, onAdd }) => {
   );
 };
 
+// ————————————————————————————————————————
+// NEW: Analytics Dashboard
+// ————————————————————————————————————————
+const AnalyticsDashboard = ({ clerkUserId, stats, weeklyGoal }) => {
+  const [weekly, setWeekly] = useState({ labels: [], data: [] });
+  const [folders, setFolders] = useState({
+    folders: [],
+    biggestFolder: "",
+    daysLeft: 0,
+  });
+
+  useEffect(() => {
+    if (!clerkUserId) return;
+
+    const load = async () => {
+      const [wRes, fRes] = await Promise.all([
+        axios.get(
+          `${DB_BASE}/api/analytics/uploads?clerkUserId=${clerkUserId}`
+        ),
+        axios.get(
+          `${DB_BASE}/api/analytics/folders?clerkUserId=${clerkUserId}`
+        ),
+      ]);
+      setWeekly(wRes.data);
+      setFolders(fRes.data);
+    };
+    load();
+  }, [clerkUserId]);
+
+  const lineData = {
+    labels: weekly.labels.map((d) =>
+      new Date(d).toLocaleDateString("en", { weekday: "short" })
+    ),
+    datasets: [
+      {
+        label: "Uploads",
+        data: weekly.data,
+        borderColor: "rgb(124, 58, 237)",
+        backgroundColor: "rgba(124, 58, 237, 0.1)",
+        tension: 0.3,
+        fill: true,
+      },
+    ],
+  };
+
+  const colors = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#f9ca24", "#a0a0a0"];
+  const doughnutData = {
+    labels: folders.folders.map((f) => f.name),
+    datasets: [
+      {
+        data: folders.folders.map((f) => f.value),
+        backgroundColor: folders.folders.map(
+          (_, i) => colors[i % colors.length]
+        ),
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const goalProgressData = {
+    labels: ["Completed", "Remaining"],
+    datasets: [
+      {
+        data: [stats.docsStudied, Math.max(weeklyGoal - stats.docsStudied, 0)],
+        backgroundColor: ["#8b5cf6", "rgba(255,255,255,0.12)"],
+        borderColor: ["#8b5cf6", "rgba(255,255,255,0.2)"],
+        borderWidth: 1,
+        hoverBackgroundColor: ["#a78bfa", "rgba(255,255,255,0.18)"],
+      },
+    ],
+  };
+
+  return (
+    <div className="dash-card wide analytics-card">
+      <h3 className="t3">Study Analytics</h3>
+
+      <div className="analytics-grid">
+        <div className="chart-wrapper">
+          <h4 className="p">Uploads this week</h4>
+          <Line data={lineData} options={{ maintainAspectRatio: false }} />
+        </div>
+
+        <div className="chart-wrapper">
+          <h4 className="p">Folder distribution</h4>
+          <Doughnut
+            data={doughnutData}
+            options={{ maintainAspectRatio: false }}
+          />
+        </div>
+
+        {/* NEW: Weekly Goal Progress Doughnut */}
+        <div className="chart-wrapper">
+          <h4 className="p">Weekly Goal</h4>
+          <Doughnut
+            data={goalProgressData}
+            options={{
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: (ctx) =>
+                      `${ctx.label}: ${ctx.raw} doc${ctx.raw !== 1 ? "s" : ""}`,
+                  },
+                },
+              },
+            }}
+          />
+          <div className="goal-doughnut-center">
+            <div className="goal-doughnut-value">{stats.docsStudied}</div>
+            <div className="goal-doughnut-total muted small">
+              / {weeklyGoal}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {folders.biggestFolder && (
+        <div className="prediction">
+          <p className="p">
+            <strong>{folders.biggestFolder}</strong> has{" "}
+            <strong>{folders.biggestCount}</strong> docs.
+          </p>
+          <p className="p muted">
+            Estimated days to finish: <strong>{folders.daysLeft}</strong>
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ————————————————————————————————————————
 const Dashboard = () => {
   const { user, isSignedIn } = useUser();
   const first = user?.firstName || "there";
@@ -177,6 +402,16 @@ const Dashboard = () => {
   const [recentUploads, setRecentUploads] = useState([]);
   const [todos, setTodos] = useState([]);
   const [planner, setPlanner] = useState([]);
+
+  // ADD THIS: weekly goal state + localStorage sync
+  const [weeklyGoal, setWeeklyGoal] = useState(() => {
+    const saved = localStorage.getItem("weeklyGoal");
+    return saved ? parseInt(saved) : 10;
+  });
+
+  useEffect(() => {
+    localStorage.setItem("weeklyGoal", weeklyGoal);
+  }, [weeklyGoal]);
 
   useEffect(() => {
     if (!isSignedIn || !clerkUserId) return;
@@ -200,7 +435,11 @@ const Dashboard = () => {
         setStats(
           statsRes.data || { docsStudied: 0, focusTime: "0h 0m", tasksDone: 0 }
         );
-        setRecentUploads(uploadsRes.data.uploads || []);
+        setRecentUploads(
+          Array.isArray(uploadsRes.data)
+            ? uploadsRes.data
+            : uploadsRes.data.uploads || []
+        );
         setTodos(todosRes.data || []);
         setPlanner(plannerRes.data || []);
       } catch (error) {
@@ -221,33 +460,28 @@ const Dashboard = () => {
       await axios.patch(`${DB_BASE}/api/todos/${todo._id}`, {
         done: todo.done,
       });
-      // Recalculate tasksDone locally or refetch stats
       const tasksDone = updatedTodos.filter((t) => t.done).length;
       setStats((prev) => ({ ...prev, tasksDone }));
     } catch (error) {
       console.error("Error updating todo:", error);
-      // Revert local state on failure
       todo.done = !todo.done;
       setTodos([...updatedTodos]);
     }
   };
 
   const handleAddTodo = (text) => {
-    const newTodo = { title: text, done: false, _id: Date.now().toString() }; // Temporary _id
+    const newTodo = { title: text, done: false, _id: Date.now().toString() };
     setTodos([...todos, newTodo]);
 
-    // Optionally add to backend
     axios
       .post(`${DB_BASE}/api/todos`, { clerkUserId, title: text })
       .then((res) => {
-        // Replace temporary _id with server-generated _id
         setTodos((prev) =>
           prev.map((t) => (t._id === newTodo._id ? res.data : t))
         );
       })
       .catch((error) => {
         console.error("Error adding todo:", error);
-        // Remove the todo if backend fails
         setTodos((prev) => prev.filter((t) => t._id !== newTodo._id));
       });
   };
@@ -288,7 +522,7 @@ const Dashboard = () => {
         <Stat
           icon={<FaBolt />}
           label="Streak"
-          value={`${streak} days`}
+          value={<StreakRing days={streak} />}
           hint="Keep it going!"
         />
         <Stat
@@ -296,9 +530,76 @@ const Dashboard = () => {
           label="Tasks done"
           value={stats.tasksDone.toString()}
         />
+
+        <Stat
+          icon={<Target />}
+          label="Weekly Goal"
+          value={`${stats.docsStudied}/${weeklyGoal}`}
+          hint={
+            stats.docsStudied >= weeklyGoal
+              ? "Goal achieved!"
+              : `${weeklyGoal - stats.docsStudied} more`
+          }
+        />
+
+        {/* NEW: Analytics Dashboard */}
+        <AnalyticsDashboard
+          clerkUserId={clerkUserId}
+          stats={stats}
+          weeklyGoal={weeklyGoal}
+        />
       </section>
 
       <section className="dash-grid">
+        {/* WEEKLY GOAL PROGRESS CARD WITH ADJUSTABLE TARGET */}
+        <article className="dash-card">
+          <h3 className="t3">Weekly Goal</h3>
+          <p className="p muted">Read documents this week</p>
+
+          <div className="goal-progress">
+            <div className="goal-bar">
+              <div
+                className="goal-fill"
+                style={{
+                  width: `${Math.min(
+                    (stats.docsStudied / weeklyGoal) * 100,
+                    100
+                  )}%`,
+                }}
+              />
+            </div>
+            <div className="goal-text">
+              <span>{stats.docsStudied}</span> / {weeklyGoal} docs
+            </div>
+          </div>
+
+          <div className="goal-controls">
+            <button
+              className="btn ghost small"
+              onClick={() => setWeeklyGoal(Math.max(1, weeklyGoal - 1))}
+              disabled={weeklyGoal <= 1}
+            >
+              −
+            </button>
+            <span className="goal-target">{weeklyGoal}</span>
+            <button
+              className="btn ghost small"
+              onClick={() => setWeeklyGoal(Math.min(30, weeklyGoal + 1))}
+              disabled={weeklyGoal >= 30}
+            >
+              +
+            </button>
+          </div>
+
+          {stats.docsStudied >= weeklyGoal ? (
+            <p className="goal-complete">Goal achieved!</p>
+          ) : (
+            <p className="goal-remaining muted small">
+              {weeklyGoal - stats.docsStudied} more to go
+            </p>
+          )}
+        </article>
+
         <article className="dash-card">
           <h3 className="t3">Recent uploads</h3>
           <p className="p">Your latest documents for quick access.</p>
@@ -310,9 +611,7 @@ const Dashboard = () => {
                 meta={`${formatDate(upload.createdAt)} • ${
                   upload.size || "N/A"
                 }`}
-                onClick={() => {
-                  /* Navigate to doc */
-                }}
+                onClick={() => {}}
               />
             ))}
           </div>

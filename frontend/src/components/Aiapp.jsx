@@ -3,7 +3,7 @@ import axios from "axios";
 import { BookOpen, CheckSquare, Upload, Loader } from "lucide-react";
 import { useAuth } from "@clerk/clerk-react";
 
-const BASE = import.meta.env.VITE_AI_API || "http://127.0.0.1:5000";
+const BASE = import.meta.env.VITE_AI_API || "http://127.0.0.1:5001";
 
 function Aiapp() {
   const { getToken } = useAuth();
