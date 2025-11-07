@@ -1,12 +1,15 @@
+// src/pages/Notes.jsx
 import React, { useState, useEffect } from "react";
-import { FaPlus, FaTrash, FaEdit } from "react-icons/fa";
+import { FaPlus, FaTrash, FaEdit, FaMagic } from "react-icons/fa";
 import { useAuth, useUser } from "@clerk/clerk-react";
+import { useNavigate } from "react-router-dom";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 
 const Notes = () => {
   const { userId, isLoaded } = useAuth();
   const { user } = useUser();
+  const navigate = useNavigate();
 
   const displayName = user?.firstName || "Anonymous";
 
@@ -14,24 +17,32 @@ const Notes = () => {
   const [newNote, setNewNote] = useState({ title: "", content: "" });
   const [editingNote, setEditingNote] = useState(null);
 
-  // Fetch notes after Clerk is ready
-  useEffect(() => {
+  // FETCH NOTES — FIXED
+  const fetchNotes = async () => {
     if (!isLoaded) return;
-    const fetchNotes = async () => {
-      try {
-        const qs = userId
-          ? `?clerkUserId=${encodeURIComponent(userId)}`
-          : `?userName=${encodeURIComponent(displayName)}`;
-        const res = await fetch(`${API_BASE}/api/notes${qs}`);
-        if (!res.ok) throw new Error(`Fetch notes failed: ${res.status}`);
-        const data = await res.json();
-        setNotes(Array.isArray(data) ? data : []);
-      } catch (err) {
-        console.error("Error fetching notes:", err);
-      }
-    };
+    try {
+      const params = userId
+        ? `clerkUserId=${userId}`
+        : `userName=${encodeURIComponent(displayName)}`;
+
+      const res = await fetch(`${API_BASE}/api/notes?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch");
+
+      const data = await res.json();
+      setNotes(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Fetch notes error:", err);
+    }
+  };
+
+  // FETCH ON MOUNT + EVERY 3 SECONDS (auto-refresh for AI saves)
+  useEffect(() => {
     fetchNotes();
+    const interval = setInterval(fetchNotes, 3000); // Auto-refresh
+    return () => clearInterval(interval);
   }, [isLoaded, userId, displayName]);
+
+  const handleNotesAiRedirect = () => navigate("/notes-ai");
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -40,8 +51,8 @@ const Notes = () => {
 
   const handleAddOrUpdateNote = async (e) => {
     e.preventDefault();
-    if (!isLoaded || !userId) {
-      alert("Please sign in to add notes.");
+    if (!userId) {
+      alert("Please sign in to save notes.");
       return;
     }
 
@@ -50,10 +61,10 @@ const Notes = () => {
     if (!title || !content) return;
 
     const payload = {
-      userName: displayName, // REQUIRED by backend
-      clerkUserId: userId, // preferred for filtering
-      title, // REQUIRED
-      content, // REQUIRED
+      userName: displayName,
+      clerkUserId: userId,
+      title,
+      content,
       createdAtLocal: new Date().toLocaleString(),
     };
 
@@ -63,25 +74,22 @@ const Notes = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Save failed ${res.status}: ${text}`);
-      }
-      const saved = await res.json();
 
-      if (editingNote) {
-        setNotes((prev) =>
-          prev.map((n) =>
+      if (!res.ok) throw new Error("Save failed");
+
+      const saved = await res.json();
+      setNotes((prev) => {
+        if (editingNote) {
+          return prev.map((n) =>
             (n._id || n.id) === (editingNote._id || editingNote.id) ? saved : n
-          )
-        );
-        setEditingNote(null);
-      } else {
-        setNotes((prev) => [saved, ...prev]);
-      }
+          );
+        }
+        return [saved, ...prev];
+      });
+
       setNewNote({ title: "", content: "" });
+      setEditingNote(null);
     } catch (err) {
-      console.error("Error saving note:", err);
       alert("Could not save note.");
     }
   };
@@ -95,17 +103,11 @@ const Notes = () => {
     const id =
       typeof idOrNote === "string" ? idOrNote : idOrNote._id || idOrNote.id;
     if (!id) return;
+
     try {
-      const res = await fetch(`${API_BASE}/api/notes/${id}`, {
-        method: "DELETE",
-      });
-      if (res.ok || res.status === 204) {
-        setNotes((prev) => prev.filter((n) => (n._id || n.id) !== id));
-      } else {
-        alert("Delete failed.");
-      }
+      await fetch(`${API_BASE}/api/notes/${id}`, { method: "DELETE" });
+      setNotes((prev) => prev.filter((n) => (n._id || n.id) !== id));
     } catch (err) {
-      console.error("Error deleting note:", err);
       alert("Delete failed.");
     }
   };
@@ -114,6 +116,10 @@ const Notes = () => {
     <div className="notes-container">
       <div className="notes-header">
         <h1 className="notes-title">Your Notes</h1>
+        <button className="btn primary" onClick={handleNotesAiRedirect}>
+          <FaMagic style={{ marginRight: ".5rem" }} />
+          Generate with AI
+        </button>
       </div>
 
       <div className="notes-content">
@@ -135,11 +141,7 @@ const Notes = () => {
             className="notes-textarea"
             required
           />
-          <button
-            type="submit"
-            className="notes-button"
-            aria-label={editingNote ? "Update Note" : "Add Note"}
-          >
+          <button type="submit" className="notes-button">
             <FaPlus className="plus-icon" />
             {editingNote ? "Update Note" : "Add Note"}
           </button>
@@ -151,7 +153,6 @@ const Notes = () => {
                 setNewNote({ title: "", content: "" });
               }}
               className="notes-cancel-button"
-              aria-label="Cancel Edit"
             >
               Cancel
             </button>
@@ -165,11 +166,13 @@ const Notes = () => {
               return (
                 <div key={key} className="note-card">
                   <div className="note-content">
-                    <h2 className="note-title">{note.title}</h2>
+                    <h2 className="note-title">
+                      {note.title}
+                      {note.title.includes("AI Notes") && " AI"}
+                    </h2>
                     <p className="note-text">{note.content}</p>
                     <span className="note-date">
                       {note.createdAtLocal ||
-                        note.date ||
                         new Date(note.createdAt).toLocaleString()}
                     </span>
                   </div>
@@ -177,16 +180,12 @@ const Notes = () => {
                     <button
                       onClick={() => handleEditNote(note)}
                       className="edit-button"
-                      aria-label="Edit Note"
-                      type="button"
                     >
                       <FaEdit />
                     </button>
                     <button
                       onClick={() => handleDeleteNote(key)}
                       className="delete-button"
-                      aria-label="Delete Note"
-                      type="button"
                     >
                       <FaTrash />
                     </button>
@@ -197,7 +196,9 @@ const Notes = () => {
           </div>
         ) : (
           <div className="no-notes-container">
-            <p className="no-notes-text">No notes created yet</p>
+            <p className="no-notes-text">
+              No notes yet. Try generating one with AI!
+            </p>
           </div>
         )}
       </div>

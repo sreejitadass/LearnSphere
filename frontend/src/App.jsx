@@ -6,11 +6,13 @@ import LandingPage from "./pages/LandingPage.jsx";
 import Pricing from "./pages/Pricing.jsx";
 import Navbar from "./components/Navbar.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import Calendar from "./pages/Calendar.jsx";
 import About from "./pages/About.jsx";
 import Upload from "./pages/Upload.jsx";
 import ChatWidget from "./pages/ChatWidget.jsx";
 import Notes from "./pages/Notes.jsx";
-import Aiapp from "./components/Aiapp.jsx"; // Assuming this is in components, but path matches your structure
+import Aiapp from "./components/Aiapp.jsx";
+import NotesAi from "./components/NotesAi.jsx";
 import { SignedIn, SignedOut, UserButton, useAuth } from "@clerk/clerk-react";
 import { SignInPage, SignUpPage } from "./pages/AuthPages.jsx";
 import { Navigate } from "react-router-dom";
@@ -62,9 +64,11 @@ function App() {
             </Protect>
           }
         />
+        <Route path="/notes-ai" element={<NotesAi />} />
         <Route path="/sign-in" element={<SignInPage />} />
         <Route path="/sign-up" element={<SignUpPage />} />
         <Route path="/about" element={<About />} />
+        <Route path="/calendar" element={<Calendar />} />
       </Routes>
     </>
   );

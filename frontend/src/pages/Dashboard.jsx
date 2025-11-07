@@ -599,7 +599,6 @@ const Dashboard = () => {
             </p>
           )}
         </article>
-
         <article className="dash-card">
           <h3 className="t3">Recent uploads</h3>
           <p className="p">Your latest documents for quick access.</p>
@@ -621,17 +620,14 @@ const Dashboard = () => {
             </p>
           )}
         </article>
-
         <StudyTimer />
-
         <ToDoList
           todos={todos}
           onToggle={handleToggleTodo}
           onAdd={handleAddTodo}
         />
-
         <article className="dash-card wide">
-          <h3 className="t3">Upcoming activities</h3>
+          <h3 className="t3">Study Planner</h3>
           <ul className="mini-list">
             {planner.map((activity, idx) => (
               <li key={idx}>
@@ -640,13 +636,13 @@ const Dashboard = () => {
             ))}
           </ul>
           {planner.length === 0 && (
-            <p className="no-content-text">
-              No upcoming activities. Add some to your planner.
-            </p>
+            <p className="no-content-text">No upcoming activities yet.</p>
           )}
           <div className="inline-actions">
-            <button className="btn ghost small">Add activity</button>
-            <button className="btn primary small">View planner</button>
+            <button className="btn ghost small">Add Task</button>
+            <Link to="/calendar" className="btn primary small">
+              Open Calendar
+            </Link>
           </div>
         </article>
       </section>
