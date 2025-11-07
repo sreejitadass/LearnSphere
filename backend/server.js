@@ -97,6 +97,92 @@ app.delete("/api/notes/:id", async (req, res) => {
   }
 });
 
+const plannerEventSchema = new mongoose.Schema(
+  {
+    clerkUserId: { type: String, required: true, index: true },
+    title: { type: String, required: true, trim: true },
+    date: { type: Date, required: true },
+    startTime: { type: String },
+    endTime: { type: String },
+    notes: { type: String, default: "" },
+    color: { type: String, default: "#a78bfa" },
+  },
+  { timestamps: true }
+);
+const PlannerEvent = mongoose.model("PlannerEvent", plannerEventSchema);
+
+//CALENDAR EVENTS - FULL CRUD
+app.get("/api/calendar/events", async (req, res) => {
+  try {
+    const { clerkUserId } = req.query;
+    if (!clerkUserId)
+      return res.status(400).json({ error: "clerkUserId required" });
+    const events = await PlannerEvent.find({ clerkUserId }).sort({ date: 1 });
+    res.json(events);
+  } catch (e) {
+    console.error("GET /api/calendar/events error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.post("/api/calendar/events", async (req, res) => {
+  try {
+    const { clerkUserId, title, date, startTime, endTime, notes, color } =
+      req.body;
+    if (!clerkUserId || !title || !date)
+      return res.status(400).json({ error: "Missing fields" });
+
+    const event = await PlannerEvent.create({
+      clerkUserId,
+      title,
+      date: new Date(date),
+      startTime: startTime || null,
+      endTime: endTime || null,
+      notes: notes || "",
+      color: color || "#a78bfa",
+    });
+
+    res.status(201).json(event);
+  } catch (e) {
+    console.error("POST /api/calendar/events error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.put("/api/calendar/events/:id", async (req, res) => {
+  try {
+    const { title, date, startTime, endTime, notes, color } = req.body;
+    const event = await PlannerEvent.findByIdAndUpdate(
+      req.params.id,
+      {
+        title,
+        date: date ? new Date(date) : undefined,
+        startTime,
+        endTime,
+        notes,
+        color,
+      },
+      { new: true }
+    );
+    if (!event) return res.status(404).json({ error: "Not found" });
+    res.json(event);
+  } catch (e) {
+    console.error("PUT /api/calendar/events error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.delete("/api/calendar/events/:id", async (req, res) => {
+  try {
+    const event = await PlannerEvent.findByIdAndDelete(req.params.id);
+    if (!event) return res.status(404).json({ error: "Not found" });
+    res.status(204).send();
+  } catch (e) {
+    console.error("DELETE /api/calendar/events error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // --- UploadDoc Model ---
 const uploadDocSchema = new mongoose.Schema(
   {
