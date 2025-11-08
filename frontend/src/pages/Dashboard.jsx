@@ -1,651 +1,351 @@
-// Dashboard.jsx
-import React, { useState, useEffect, useMemo } from "react";
-import {
-  FaBookOpen,
-  FaClock,
-  FaBolt,
-  FaCheckCircle,
-  FaPlus,
-  FaPlay,
-  FaPause,
-  FaStop,
-  FaBullseye as Target,
-} from "react-icons/fa";
+// src/pages/Dashboard.jsx
+import React, { useState, useEffect } from "react";
+import { useAuth } from "@clerk/clerk-react";
 import { Link } from "react-router-dom";
-import { useUser } from "@clerk/clerk-react";
-import axios from "axios";
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-} from "chart.js";
-import { Line, Doughnut } from "react-chartjs-2";
-import confetti from "canvas-confetti";
+  Flame,
+  Target,
+  Brain,
+  Clock,
+  Calendar,
+  FileText,
+  TrendingUp,
+  Award,
+  Sparkles,
+  CheckCircle2,
+  Circle,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import { useUser } from "@clerk/clerk-react";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend
-);
-
-const DB_BASE = import.meta.env.VITE_DB_API || "http://127.0.0.1:3000";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 
 const AFFIRMATIONS = [
-  "I can do hard things.",
-  "Progress over perfection.",
-  "Focus. Breathe. Continue.",
-  "Small steps lead to big wins.",
-  "Consistency beats intensity.",
-  "My effort compounds over time.",
-  "I am capable and resilient.",
-  "I’m building my future today.",
-  "Learning is my superpower.",
-  "One page at a time.",
+  "You're not studying — you're building your future empire.",
+  "Every page you read is a brick in your unbreakable mind.",
+  "You're not behind. You're exactly where you need to be to win.",
+  "Your brain is a weapon. Keep sharpening it.",
+  "The version of you in 6 months is thanking you right now.",
+  "Discipline today = Freedom tomorrow.",
+  "You're not tired. You're about to level up.",
+  "Greatness is built in the dark, when no one is watching.",
+  "You're one study session away from a breakthrough.",
+  "Most people quit. You? You're just getting started.",
 ];
 
-const AffirmationBanner = () => {
-  const pick = useMemo(() => {
-    const idx = Math.floor(Math.random() * AFFIRMATIONS.length);
-    return `“${AFFIRMATIONS[idx]}”`;
-  }, []);
-  return (
-    <div className="dash-banner center">
-      <span className="dash-banner-text italic">{pick}</span>
-    </div>
+const Dashboard = () => {
+  const { userId, getToken } = useAuth();
+  const { user } = useUser();
+
+  const [affirmation] = useState(
+    () => AFFIRMATIONS[Math.floor(Math.random() * AFFIRMATIONS.length)]
   );
-};
 
-const StreakRing = ({ days }) => {
-  const radius = 32;
-  const circumference = 2 * Math.PI * radius;
-  const progress = Math.min(days / 30, 1); // 30-day max
-  const strokeDashoffset = circumference - progress * circumference;
+  const [stats, setStats] = useState({
+    streak: 0,
+    bestStreak: 0,
+    docsStudied: 0,
+    tasksDone: 0,
+    focusTime: "0h 0m",
+    upcoming: [],
+    weeklyData: [0, 0, 0, 0, 0, 0, 0],
+    recentUploads: [],
+    todos: [],
+    weeklyGoal: 15,
+    weeklyProgress: 0,
+  });
 
-  // Trigger confetti on milestones
-  useEffect(() => {
-    if (days > 0 && days % 7 === 0) {
-      confetti({
-        particleCount: 80,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ["#8b5cf6", "#ec4899", "#3b82f6"],
-      });
-    }
-  }, [days]);
-
-  return (
-    <div className="streak-ring-container">
-      <svg width="80" height="80" viewBox="0 0 100 100">
-        <defs>
-          <linearGradient
-            id="streakGradient"
-            x1="0%"
-            y1="0%"
-            x2="100%"
-            y2="100%"
-          >
-            <stop offset="0%" stopColor="#8b5cf6" />
-            <stop offset="100%" stopColor="#ec4899" />
-          </linearGradient>
-        </defs>
-
-        {/* Background ring */}
-        <circle
-          cx="50"
-          cy="50"
-          r={radius}
-          stroke="#333"
-          strokeWidth="8"
-          fill="none"
-        />
-
-        {/* Progress ring */}
-        <circle
-          cx="50"
-          cy="50"
-          r={radius}
-          stroke="url(#streakGradient)"
-          strokeWidth="8"
-          fill="none"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
-          className="streak-progress-ring"
-          style={{
-            filter: days >= 7 ? "drop-shadow(0 0 8px #8b5cf6)" : "none",
-          }}
-        />
-
-        {/* Center number */}
-        <text x="50" y="55" textAnchor="middle" className="streak-number">
-          {days}
-        </text>
-      </svg>
-    </div>
-  );
-};
-
-const Stat = ({ icon, label, value, hint }) => (
-  <div className="dash-card stat">
-    <div className="stat-top">
-      <div className="icn">{icon}</div>
-      <div className="stat-val">{value}</div>
-    </div>
-    <div className="stat-label">{label}</div>
-    {hint && <div className="stat-hint">{hint}</div>}
-  </div>
-);
-
-const Item = ({ title, meta, onClick }) => (
-  <div className="item" onClick={onClick}>
-    <div className="item-title">{title}</div>
-    <div className="item-meta">{meta}</div>
-  </div>
-);
-
-const StudyTimer = () => {
-  const [time, setTime] = useState(0);
-  const [isActive, setIsActive] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-
-  useEffect(() => {
-    let interval;
-    if (isActive && !isPaused) {
-      interval = setInterval(() => {
-        setTime((prev) => prev + 1);
-      }, 1000);
-    } else if (!isActive && !isPaused) {
-      setTime(0);
-    }
-    return () => clearInterval(interval);
-  }, [isActive, isPaused]);
-
-  const handleStart = () => setIsActive(true);
-  const handlePause = () => setIsPaused(!isPaused);
-  const handleStop = () => {
-    setIsActive(false);
-    setIsPaused(false);
-  };
-
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs
-      .toString()
-      .padStart(2, "0")}`;
-  };
-
-  return (
-    <div className="dash-card timer-card">
-      <h3 className="t3">Study Timer</h3>
-      <p className="p muted">Pomodoro-style focus sessions</p>
-      <div className="timer-display">{formatTime(time)}</div>
-      <div className="timer-controls">
-        {!isActive ? (
-          <button className="btn primary small" onClick={handleStart}>
-            <FaPlay /> Start
-          </button>
-        ) : isPaused ? (
-          <button className="btn primary small" onClick={handlePause}>
-            <FaPlay /> Resume
-          </button>
-        ) : (
-          <button className="btn ghost small" onClick={handlePause}>
-            <FaPause /> Pause
-          </button>
-        )}
-        {isActive && (
-          <button className="btn ghost small" onClick={handleStop}>
-            <FaStop /> Stop
-          </button>
-        )}
-      </div>
-    </div>
-  );
-};
-
-const ToDoList = ({ todos, onToggle, onAdd }) => {
   const [newTodo, setNewTodo] = useState("");
 
-  const handleAdd = (e) => {
-    e.preventDefault();
-    if (newTodo.trim()) {
-      onAdd(newTodo);
-      setNewTodo("");
+  const fetchAll = async () => {
+    if (!userId) return;
+    try {
+      const token = await getToken();
+      const headers = { Authorization: `Bearer ${token}` };
+
+      const [
+        streakRes,
+        statsRes,
+        upcomingRes,
+        weeklyRes,
+        uploadsRes,
+        todosRes,
+      ] = await Promise.all([
+        fetch(`${API_BASE}/api/streak?clerkUserId=${userId}`, { headers }),
+        fetch(`${API_BASE}/api/stats?clerkUserId=${userId}`, { headers }),
+        fetch(
+          `${API_BASE}/api/planner/upcoming?clerkUserId=${userId}&limit=4`,
+          { headers }
+        ),
+        fetch(`${API_BASE}/api/analytics/uploads?clerkUserId=${userId}`, {
+          headers,
+        }),
+        fetch(`${API_BASE}/api/uploads?clerkUserId=${userId}&limit=5`, {
+          headers,
+        }),
+        fetch(`${API_BASE}/api/todos?clerkUserId=${userId}`, { headers }),
+      ]);
+
+      const [streak, statsData, upcoming, weekly, uploads, todos] =
+        await Promise.all([
+          streakRes.json(),
+          statsRes.json(),
+          upcomingRes.json(),
+          weeklyRes.json(),
+          uploadsRes.json(),
+          todosRes.json(),
+        ]);
+
+      const progress = weekly.data.reduce((a, b) => a + b, 0);
+
+      setStats({
+        streak: streak?.currentStreak || 0,
+        bestStreak: streak?.bestStreak || 0,
+        docsStudied: statsData.docsStudied || 0,
+        tasksDone: statsData.tasksDone || 0,
+        focusTime: statsData.focusTime || "0h",
+        upcoming: upcoming || [],
+        weeklyData: weekly.data || [0, 0, 0, 0, 0, 0, 0],
+        recentUploads: uploads || [],
+        todos: todos || [],
+        weeklyGoal: 15,
+        weeklyProgress: progress,
+      });
+    } catch (err) {
+      console.error("Dashboard load failed");
     }
   };
 
-  return (
-    <div className="dash-card todo-card">
-      <h3 className="t3">To-Do List</h3>
-      <form onSubmit={handleAdd} className="todo-add">
-        <input
-          type="text"
-          value={newTodo}
-          onChange={(e) => setNewTodo(e.target.value)}
-          placeholder="Add a task..."
-          className="input small"
-        />
-        <button type="submit" className="btn primary small">
-          <FaPlus />
-        </button>
-      </form>
-      <ul className="mini-list">
-        {todos.map((todo, idx) => (
-          <li
-            key={idx}
-            className={`todo-item ${todo.done ? "completed" : ""}`}
-            onClick={() => onToggle(idx)}
-          >
-            {todo.title}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-};
-
-// ————————————————————————————————————————
-// NEW: Analytics Dashboard
-// ————————————————————————————————————————
-const AnalyticsDashboard = ({ clerkUserId, stats, weeklyGoal }) => {
-  const [weekly, setWeekly] = useState({ labels: [], data: [] });
-  const [folders, setFolders] = useState({
-    folders: [],
-    biggestFolder: "",
-    daysLeft: 0,
-  });
-
   useEffect(() => {
-    if (!clerkUserId) return;
+    fetchAll();
+  }, [userId]);
 
-    const load = async () => {
-      const [wRes, fRes] = await Promise.all([
-        axios.get(
-          `${DB_BASE}/api/analytics/uploads?clerkUserId=${clerkUserId}`
-        ),
-        axios.get(
-          `${DB_BASE}/api/analytics/folders?clerkUserId=${clerkUserId}`
-        ),
-      ]);
-      setWeekly(wRes.data);
-      setFolders(fRes.data);
-    };
-    load();
-  }, [clerkUserId]);
-
-  const lineData = {
-    labels: weekly.labels.map((d) =>
-      new Date(d).toLocaleDateString("en", { weekday: "short" })
-    ),
-    datasets: [
-      {
-        label: "Uploads",
-        data: weekly.data,
-        borderColor: "rgb(124, 58, 237)",
-        backgroundColor: "rgba(124, 58, 237, 0.1)",
-        tension: 0.3,
-        fill: true,
-      },
-    ],
+  const addTodo = async () => {
+    if (!newTodo.trim()) return;
+    try {
+      const token = await getToken();
+      await fetch(`${API_BASE}/api/todos`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ clerkUserId: userId, title: newTodo }),
+      });
+      setNewTodo("");
+      fetchAll();
+    } catch (err) {
+      alert("Failed to add task");
+    }
   };
 
-  const colors = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#f9ca24", "#a0a0a0"];
-  const doughnutData = {
-    labels: folders.folders.map((f) => f.name),
-    datasets: [
-      {
-        data: folders.folders.map((f) => f.value),
-        backgroundColor: folders.folders.map(
-          (_, i) => colors[i % colors.length]
-        ),
-        borderWidth: 1,
-      },
-    ],
+  const toggleTodo = async (id, done) => {
+    try {
+      const token = await getToken();
+      await fetch(`${API_BASE}/api/todos/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ done: !done }),
+      });
+      fetchAll();
+    } catch (err) {
+      alert("Update failed");
+    }
   };
 
-  const goalProgressData = {
-    labels: ["Completed", "Remaining"],
-    datasets: [
-      {
-        data: [stats.docsStudied, Math.max(weeklyGoal - stats.docsStudied, 0)],
-        backgroundColor: ["#8b5cf6", "rgba(255,255,255,0.12)"],
-        borderColor: ["#8b5cf6", "rgba(255,255,255,0.2)"],
-        borderWidth: 1,
-        hoverBackgroundColor: ["#a78bfa", "rgba(255,255,255,0.18)"],
-      },
-    ],
+  const deleteTodo = async (id) => {
+    try {
+      const token = await getToken();
+      await fetch(`${API_BASE}/api/todos/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      fetchAll();
+    } catch (err) {
+      alert("Delete failed");
+    }
   };
+
+  const formatDate = (d) =>
+    new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
   return (
-    <div className="dash-card wide analytics-card">
-      <h3 className="t3">Study Analytics</h3>
+    <div className="epic-dashboard">
+      {/* AFFIRMATION BANNER */}
+      <div className="affirmation-banner">
+        <Sparkles className="sparkle-left" />
+        <p className="affirmation-text">{affirmation}</p>
+        <Sparkles className="sparkle-right" />
+      </div>
 
-      <div className="analytics-grid">
-        <div className="chart-wrapper">
-          <h4 className="p">Uploads this week</h4>
-          <Line data={lineData} options={{ maintainAspectRatio: false }} />
+      {/* HERO */}
+      <div className="epic-hero">
+        <div className="hero-glow"></div>
+        <h1 className="hero-title">
+          Welcome,{" "}
+          <span className="username-glow">{user?.firstName || "Warrior"}</span>
+        </h1>
+        <div className="streak-display">
+          <Flame size={64} />
+          <span className="streak-count">{stats.streak}</span>
         </div>
+      </div>
 
-        <div className="chart-wrapper">
-          <h4 className="p">Folder distribution</h4>
-          <Doughnut
-            data={doughnutData}
-            options={{ maintainAspectRatio: false }}
-          />
+      {/* STATS GRID */}
+      <div className="epic-grid">
+        <div className="epic-stat purple">
+          <Brain size={32} />
+          <div>
+            <p>Docs Conquered</p>
+            <h3>{stats.docsStudied}</h3>
+          </div>
         </div>
-
-        {/* NEW: Weekly Goal Progress Doughnut */}
-        <div className="chart-wrapper">
-          <h4 className="p">Weekly Goal</h4>
-          <Doughnut
-            data={goalProgressData}
-            options={{
-              maintainAspectRatio: false,
-              plugins: {
-                legend: { display: false },
-                tooltip: {
-                  callbacks: {
-                    label: (ctx) =>
-                      `${ctx.label}: ${ctx.raw} doc${ctx.raw !== 1 ? "s" : ""}`,
-                  },
-                },
-              },
-            }}
-          />
-          <div className="goal-doughnut-center">
-            <div className="goal-doughnut-value">{stats.docsStudied}</div>
-            <div className="goal-doughnut-total muted small">
-              / {weeklyGoal}
-            </div>
+        <div className="epic-stat green">
+          <Target size={32} />
+          <div>
+            <p>Tasks Slayed</p>
+            <h3>{stats.tasksDone}</h3>
+          </div>
+        </div>
+        <div className="epic-stat orange">
+          <Clock size={32} />
+          <div>
+            <p>Focus Time</p>
+            <h3>{stats.focusTime}</h3>
+          </div>
+        </div>
+        <div className="epic-stat pink">
+          <Award size={32} />
+          <div>
+            <p>Legendary Streak</p>
+            <h3>{stats.bestStreak}</h3>
           </div>
         </div>
       </div>
 
-      {folders.biggestFolder && (
-        <div className="prediction">
-          <p className="p">
-            <strong>{folders.biggestFolder}</strong> has{" "}
-            <strong>{folders.biggestCount}</strong> docs.
-          </p>
-          <p className="p muted">
-            Estimated days to finish: <strong>{folders.daysLeft}</strong>
-          </p>
+      {/* WEEKLY PROGRESS */}
+      <div className="epic-card weekly-card">
+        <div className="card-header">
+          <TrendingUp size={24} />
+          <h3>Weekly Uploads</h3>
+          <span className="progress-text">
+            {stats.weeklyProgress} / {stats.weeklyGoal}
+          </span>
         </div>
-      )}
-    </div>
-  );
-};
-
-// ————————————————————————————————————————
-const Dashboard = () => {
-  const { user, isSignedIn } = useUser();
-  const first = user?.firstName || "there";
-  const clerkUserId = user?.id;
-
-  const [streak, setStreak] = useState(0);
-  const [stats, setStats] = useState({
-    docsStudied: 0,
-    focusTime: "0h 0m",
-    tasksDone: 0,
-  });
-  const [recentUploads, setRecentUploads] = useState([]);
-  const [todos, setTodos] = useState([]);
-  const [planner, setPlanner] = useState([]);
-
-  // ADD THIS: weekly goal state + localStorage sync
-  const [weeklyGoal, setWeeklyGoal] = useState(() => {
-    const saved = localStorage.getItem("weeklyGoal");
-    return saved ? parseInt(saved) : 10;
-  });
-
-  useEffect(() => {
-    localStorage.setItem("weeklyGoal", weeklyGoal);
-  }, [weeklyGoal]);
-
-  useEffect(() => {
-    if (!isSignedIn || !clerkUserId) return;
-
-    const fetchData = async () => {
-      try {
-        const [streakRes, statsRes, uploadsRes, todosRes, plannerRes] =
-          await Promise.all([
-            axios.get(`${DB_BASE}/api/streak?clerkUserId=${clerkUserId}`),
-            axios.get(`${DB_BASE}/api/stats?clerkUserId=${clerkUserId}`),
-            axios.get(
-              `${DB_BASE}/api/uploads?clerkUserId=${clerkUserId}&limit=4`
-            ),
-            axios.get(`${DB_BASE}/api/todos?clerkUserId=${clerkUserId}`),
-            axios.get(
-              `${DB_BASE}/api/planner/upcoming?clerkUserId=${clerkUserId}`
-            ),
-          ]);
-
-        setStreak(streakRes.data?.currentStreak || 0);
-        setStats(
-          statsRes.data || { docsStudied: 0, focusTime: "0h 0m", tasksDone: 0 }
-        );
-        setRecentUploads(
-          Array.isArray(uploadsRes.data)
-            ? uploadsRes.data
-            : uploadsRes.data.uploads || []
-        );
-        setTodos(todosRes.data || []);
-        setPlanner(plannerRes.data || []);
-      } catch (error) {
-        console.error("Error fetching dashboard data:", error);
-      }
-    };
-
-    fetchData();
-  }, [isSignedIn, clerkUserId]);
-
-  const handleToggleTodo = async (idx) => {
-    const updatedTodos = [...todos];
-    const todo = updatedTodos[idx];
-    todo.done = !todo.done;
-    setTodos(updatedTodos);
-
-    try {
-      await axios.patch(`${DB_BASE}/api/todos/${todo._id}`, {
-        done: todo.done,
-      });
-      const tasksDone = updatedTodos.filter((t) => t.done).length;
-      setStats((prev) => ({ ...prev, tasksDone }));
-    } catch (error) {
-      console.error("Error updating todo:", error);
-      todo.done = !todo.done;
-      setTodos([...updatedTodos]);
-    }
-  };
-
-  const handleAddTodo = (text) => {
-    const newTodo = { title: text, done: false, _id: Date.now().toString() };
-    setTodos([...todos, newTodo]);
-
-    axios
-      .post(`${DB_BASE}/api/todos`, { clerkUserId, title: text })
-      .then((res) => {
-        setTodos((prev) =>
-          prev.map((t) => (t._id === newTodo._id ? res.data : t))
-        );
-      })
-      .catch((error) => {
-        console.error("Error adding todo:", error);
-        setTodos((prev) => prev.filter((t) => t._id !== newTodo._id));
-      });
-  };
-
-  const formatDate = (dateStr) =>
-    new Date(dateStr).toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-    });
-
-  return (
-    <div className="dashboard">
-      <AffirmationBanner />
-
-      <header className="dash-head">
-        <div>
-          <h2 className="h2">
-            Welcome back, {first}! Here’s your current study snapshot.
-          </h2>
-          <p className="sub">Stay consistent and watch your progress grow.</p>
+        <div className="progress-container">
+          <div
+            className="progress-fill"
+            style={{
+              width: `${Math.min(
+                (stats.weeklyProgress / stats.weeklyGoal) * 100,
+                100
+              )}%`,
+            }}
+          />
         </div>
-      </header>
-
-      <section className="dash-stats">
-        <Stat
-          icon={<FaBookOpen />}
-          label="Docs studied"
-          value={stats.docsStudied.toString()}
-          hint="this week"
-        />
-        <Stat
-          icon={<FaClock />}
-          label="Focus time"
-          value={stats.focusTime}
-          hint="Past 7 days"
-        />
-        <Stat
-          icon={<FaBolt />}
-          label="Streak"
-          value={<StreakRing days={streak} />}
-          hint="Keep it going!"
-        />
-        <Stat
-          icon={<FaCheckCircle />}
-          label="Tasks done"
-          value={stats.tasksDone.toString()}
-        />
-
-        <Stat
-          icon={<Target />}
-          label="Weekly Goal"
-          value={`${stats.docsStudied}/${weeklyGoal}`}
-          hint={
-            stats.docsStudied >= weeklyGoal
-              ? "Goal achieved!"
-              : `${weeklyGoal - stats.docsStudied} more`
-          }
-        />
-
-        {/* NEW: Analytics Dashboard */}
-        <AnalyticsDashboard
-          clerkUserId={clerkUserId}
-          stats={stats}
-          weeklyGoal={weeklyGoal}
-        />
-      </section>
-
-      <section className="dash-grid">
-        {/* WEEKLY GOAL PROGRESS CARD WITH ADJUSTABLE TARGET */}
-        <article className="dash-card">
-          <h3 className="t3">Weekly Goal</h3>
-          <p className="p muted">Read documents this week</p>
-
-          <div className="goal-progress">
-            <div className="goal-bar">
+        <div className="weekly-bars">
+          {stats.weeklyData.map((val, i) => (
+            <div key={i} className="day-bar">
               <div
-                className="goal-fill"
-                style={{
-                  width: `${Math.min(
-                    (stats.docsStudied / weeklyGoal) * 100,
-                    100
-                  )}%`,
-                }}
-              />
+                className="day-fill"
+                style={{ height: `${(val / 5) * 100}%` }}
+              >
+                {val > 0 && <span>{val}</span>}
+              </div>
+              <small>{["M", "T", "W", "T", "F", "S", "S"][i]}</small>
             </div>
-            <div className="goal-text">
-              <span>{stats.docsStudied}</span> / {weeklyGoal} docs
-            </div>
-          </div>
+          ))}
+        </div>
+      </div>
 
-          <div className="goal-controls">
-            <button
-              className="btn ghost small"
-              onClick={() => setWeeklyGoal(Math.max(1, weeklyGoal - 1))}
-              disabled={weeklyGoal <= 1}
-            >
-              −
-            </button>
-            <span className="goal-target">{weeklyGoal}</span>
-            <button
-              className="btn ghost small"
-              onClick={() => setWeeklyGoal(Math.min(30, weeklyGoal + 1))}
-              disabled={weeklyGoal >= 30}
-            >
-              +
-            </button>
+      {/* RECENT UPLOADS + TODO */}
+      <div className="epic-dual">
+        <div className="epic-card uploads-card">
+          <div className="card-header">
+            <FileText size={24} />
+            <h3>Recent Uploads</h3>
           </div>
-
-          {stats.docsStudied >= weeklyGoal ? (
-            <p className="goal-complete">Goal achieved!</p>
+          {stats.recentUploads.length === 0 ? (
+            <p className="empty">No uploads yet. Time to feed the beast.</p>
           ) : (
-            <p className="goal-remaining muted small">
-              {weeklyGoal - stats.docsStudied} more to go
-            </p>
+            <div className="upload-list">
+              {stats.recentUploads.map((doc) => (
+                <div key={doc._id} className="upload-item">
+                  <FileText size={16} />
+                  <div>
+                    <p>{doc.title}</p>
+                    <small>
+                      {doc.folder} • {formatDate(doc.createdAt)}
+                    </small>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
-        </article>
-        <article className="dash-card">
-          <h3 className="t3">Recent uploads</h3>
-          <p className="p">Your latest documents for quick access.</p>
-          <div className="list">
-            {recentUploads.map((upload, idx) => (
-              <Item
-                key={idx}
-                title={`Uploaded: ${upload.title}`}
-                meta={`${formatDate(upload.createdAt)} • ${
-                  upload.size || "N/A"
-                }`}
-                onClick={() => {}}
-              />
-            ))}
+        </div>
+
+        <div className="epic-card todo-card">
+          <div className="card-header">
+            <CheckCircle2 size={24} />
+            <h3>Today's Missions</h3>
           </div>
-          {recentUploads.length === 0 && (
-            <p className="no-content-text">
-              No recent uploads. <Link to="/upload">Add one now</Link>.
-            </p>
-          )}
-        </article>
-        <StudyTimer />
-        <ToDoList
-          todos={todos}
-          onToggle={handleToggleTodo}
-          onAdd={handleAddTodo}
-        />
-        <article className="dash-card wide">
-          <h3 className="t3">Study Planner</h3>
-          <ul className="mini-list">
-            {planner.map((activity, idx) => (
-              <li key={idx}>
-                {activity.title} — {formatDate(activity.dueAt)}
-              </li>
-            ))}
-          </ul>
-          {planner.length === 0 && (
-            <p className="no-content-text">No upcoming activities yet.</p>
-          )}
-          <div className="inline-actions">
-            <button className="btn ghost small">Add Task</button>
-            <Link to="/calendar" className="btn primary small">
-              Open Calendar
-            </Link>
+          <div className="todo-input">
+            <input
+              value={newTodo}
+              onChange={(e) => setNewTodo(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && addTodo()}
+              placeholder="Add a task..."
+            />
+            <button onClick={addTodo}>
+              <Plus size={20} />
+            </button>
           </div>
-        </article>
-      </section>
+          <div className="todo-list">
+            {stats.todos.length === 0 ? (
+              <p className="empty">All clear! You're a machine.</p>
+            ) : (
+              stats.todos.map((todo) => (
+                <div
+                  key={todo._id}
+                  className={`todo-item ${todo.done ? "done" : ""}`}
+                >
+                  <button onClick={() => toggleTodo(todo._id, todo.done)}>
+                    {todo.done ? (
+                      <CheckCircle2 size={20} />
+                    ) : (
+                      <Circle size={20} />
+                    )}
+                  </button>
+                  <span>{todo.title}</span>
+                  <button
+                    onClick={() => deleteTodo(todo._id)}
+                    className="delete"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* QUICK ACTIONS */}
+      <div className="epic-actions">
+        <Link to="/notes-ai" className="btn primary">
+          AI Notes
+        </Link>
+        <Link to="/upload" className="btn primary">
+          Upload Docs
+        </Link>
+        <Link to="/calendar" className="btn primary">
+          Calendar
+        </Link>
+      </div>
     </div>
   );
 };

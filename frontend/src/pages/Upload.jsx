@@ -1,10 +1,11 @@
+// src/pages/Upload.jsx
 import React, { useCallback, useMemo, useState, useEffect } from "react";
 import { FaMagic } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { useAuth, useUser } from "@clerk/clerk-react";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
-const FLASK_URL = "http://localhost:5001"; // Flask AI server
+const FLASK_URL = "http://localhost:5001";
 const UNCATEGORIZED = "Uncategorized";
 
 const toObjectURL = (file) => URL.createObjectURL(file);
@@ -31,23 +32,19 @@ const Upload = () => {
 
   /* ==================== FETCH UPLOADS ==================== */
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isLoaded || !userId) return;
 
     const fetchUploads = async () => {
       try {
-        const qs = userId
-          ? `?clerkUserId=${encodeURIComponent(userId)}`
-          : `?userName=${encodeURIComponent(displayName)}`;
-        const res = await fetch(`${API_BASE}/api/uploads${qs}`);
+        const res = await fetch(
+          `${API_BASE}/api/uploads?clerkUserId=${userId}`
+        );
         if (!res.ok) {
-          console.warn("No uploads or error:", res.status);
           setDocs([]);
           setFolders([UNCATEGORIZED]);
           return;
         }
-
-        const data = await res.json();
-        const items = Array.isArray(data) ? data : [];
+        const items = await res.json();
 
         const normalized = items.map((it) => ({
           id: it._id,
@@ -60,7 +57,6 @@ const Upload = () => {
         }));
 
         setDocs(normalized);
-
         const uniqueFolders = new Set([
           UNCATEGORIZED,
           ...normalized.map((d) => d.folder).filter(Boolean),
@@ -74,9 +70,9 @@ const Upload = () => {
     };
 
     fetchUploads();
-  }, [isLoaded, userId, displayName]);
+  }, [isLoaded, userId]);
 
-  /* ==================== FETCH RECOMMENDATIONS ==================== */
+  /* ==================== RECOMMENDATIONS ==================== */
   useEffect(() => {
     if (!previewDoc?.id || previewDoc.id.length !== 24) {
       setRecommendations([]);
@@ -90,16 +86,12 @@ const Upload = () => {
         const res = await fetch(`${API_BASE}/api/recommend`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            clerkUserId: userId,
-            docId: previewDoc.id,
-          }),
+          body: JSON.stringify({ clerkUserId: userId, docId: previewDoc.id }),
         });
         const data = await res.json();
         setRecommendations(data.recommendations || []);
       } catch (e) {
-        console.error("Recs fetch error:", e);
-        setRecommendations([]);
+        console.error("Recs error:", e);
       } finally {
         setLoadingRecs(false);
       }
@@ -125,17 +117,17 @@ const Upload = () => {
     return map;
   }, [docs, sortedFolders]);
 
-  /* ==================== FILE INGESTION (FLASK) ==================== */
+  /* ==================== FILE INGESTION — FINAL FIXED ==================== */
   const ingestFiles = useCallback(
     async (fileList, targetFolder) => {
       const incoming = Array.from(fileList || []);
       if (!incoming.length) return;
 
-      const newDocs = [];
-      for (const f of incoming) {
+      // 1. Create temp docs
+      const tempDocs = incoming.map((f) => {
         const url = toObjectURL(f);
-        const tempId = `${f.name}-${Date.now()}`;
-        const draft = {
+        const tempId = `temp-${Date.now()}-${Math.random()}`;
+        return {
           id: tempId,
           name: f.name,
           size: f.size,
@@ -143,10 +135,18 @@ const Upload = () => {
           url,
           type: f.type,
           processed: false,
+          uploading: true,
         };
-        newDocs.push(draft);
+      });
 
-        // SEND TO FLASK
+      // 2. Add all at once
+      setDocs((prev) => [...prev, ...tempDocs]);
+
+      // 3. Upload each
+      for (let i = 0; i < incoming.length; i++) {
+        const f = incoming[i];
+        const tempId = tempDocs[i].id;
+
         const formData = new FormData();
         formData.append("file", f);
         formData.append("clerkUserId", userId || "");
@@ -158,21 +158,41 @@ const Upload = () => {
             method: "POST",
             body: formData,
           });
-          if (res.ok) {
-            const data = await res.json();
-            const saved = data.savedDoc;
-            draft.id = saved._id;
-            draft.processed = saved.processed;
-            if (!folders.includes(targetFolder))
+
+          if (!res.ok) throw new Error("Upload failed");
+
+          const data = await res.json();
+          const saved = data.savedDoc;
+
+          if (saved?._id) {
+            setDocs((prev) =>
+              prev.map((doc) =>
+                doc.id === tempId
+                  ? {
+                      ...doc,
+                      id: saved._id,
+                      processed: saved.processed || false,
+                      uploading: false,
+                    }
+                  : doc
+              )
+            );
+
+            if (!folders.includes(targetFolder)) {
               setFolders((prev) => [...prev, targetFolder]);
-          } else {
-            console.error("Flask upload failed:", await res.text());
+            }
           }
         } catch (e) {
-          console.error("Flask upload error:", e);
+          console.error("Upload error:", e);
+          setDocs((prev) =>
+            prev.map((doc) =>
+              doc.id === tempId
+                ? { ...doc, uploading: false, processed: "error" }
+                : doc
+            )
+          );
         }
       }
-      setDocs((prev) => [...prev, ...newDocs]);
     },
     [userId, displayName, folders]
   );
@@ -187,10 +207,7 @@ const Upload = () => {
     e.preventDefault();
     setDragOver(true);
   };
-  const onDragLeave = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-  };
+  const onDragLeave = () => setDragOver(false);
 
   /* ==================== FOLDER CRUD ==================== */
   const createFolder = () => {
@@ -219,11 +236,6 @@ const Upload = () => {
     setRenameFolderNew("");
   };
 
-  const cancelRename = () => {
-    setRenameFolderId("");
-    setRenameFolderNew("");
-  };
-
   const deleteFolder = (name) => {
     if (name === UNCATEGORIZED) return;
     setFolders((f) => f.filter((x) => x !== name));
@@ -233,11 +245,9 @@ const Upload = () => {
     if (activeFolder === name) setActiveFolder(UNCATEGORIZED);
   };
 
-  /* ==================== DELETE DOCUMENT ==================== */
-  const removeDoc = async (docOrId) => {
-    const id = typeof docOrId === "string" ? docOrId : docOrId?.id;
+  /* ==================== DELETE DOC ==================== */
+  const removeDoc = async (id) => {
     if (!id || id.length !== 24) return;
-
     try {
       const res = await fetch(`${API_BASE}/api/uploads/${id}`, {
         method: "DELETE",
@@ -245,11 +255,9 @@ const Upload = () => {
       if (res.ok || res.status === 204) {
         setDocs((prev) => prev.filter((d) => d.id !== id));
         if (previewDoc?.id === id) setPreviewDoc(null);
-      } else {
-        alert("Could not delete document.");
       }
     } catch (e) {
-      alert("Network error while deleting.");
+      alert("Delete failed");
     }
   };
 
@@ -260,8 +268,8 @@ const Upload = () => {
         <div>
           <h1 className="h2">Documents</h1>
           <p className="sub small">
-            Drag files or choose from device. Organize into folders; anything
-            unassigned goes to “{UNCATEGORIZED}”.
+            Drag files or choose from device. Anything unassigned goes to “
+            {UNCATEGORIZED}”.
           </p>
         </div>
         <div className="upload-actions">
@@ -289,7 +297,7 @@ const Upload = () => {
       </header>
 
       <div className="upload-body">
-        {/* LEFT SIDEBAR */}
+        {/* SIDEBAR */}
         <aside className="upload-side">
           <div className="about-card">
             <div className="side-head">
@@ -324,7 +332,10 @@ const Upload = () => {
                           onChange={(e) => setRenameFolderNew(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") applyRename();
-                            if (e.key === "Escape") cancelRename();
+                            if (e.key === "Escape") {
+                              setRenameFolderId("");
+                              setRenameFolderNew("");
+                            }
                           }}
                           autoFocus
                         />
@@ -336,7 +347,10 @@ const Upload = () => {
                         </button>
                         <button
                           className="btn ghost small"
-                          onClick={cancelRename}
+                          onClick={() => {
+                            setRenameFolderId("");
+                            setRenameFolderNew("");
+                          }}
                         >
                           Cancel
                         </button>
@@ -350,7 +364,6 @@ const Upload = () => {
                         <span className="badge">{count}</span>
                       </button>
                     )}
-
                     {name !== UNCATEGORIZED && renameFolderId !== name && (
                       <div className="folder-actions">
                         <button
@@ -373,7 +386,6 @@ const Upload = () => {
             </ul>
           </div>
 
-          {/* UPLOAD DROPZONE */}
           <div
             role="button"
             tabIndex={0}
@@ -382,10 +394,8 @@ const Upload = () => {
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
+              if (e.key === "Enter" || e.key === " ")
                 document.getElementById("file-input")?.click();
-              }
             }}
           >
             <div className="dz-title">Upload to</div>
@@ -394,13 +404,11 @@ const Upload = () => {
             </div>
           </div>
 
-          {/* RECOMMENDER */}
           {previewDoc && previewDoc.id.length === 24 && (
             <div className="about-card recommender-card">
               <h4 className="t3" style={{ margin: "0 0 0.75rem" }}>
                 Recommended Materials
               </h4>
-
               {loadingRecs ? (
                 <p className="muted small">Loading...</p>
               ) : recommendations.length === 0 ? (
@@ -426,8 +434,8 @@ const Upload = () => {
                       <li
                         key={rec.docId}
                         style={{
-                          background: "rgba(255, 255, 255, 0.04)",
-                          border: "1px solid rgba(255, 255, 255, 0.08)",
+                          background: "rgba(255,255,255,0.04)",
+                          border: "1px solid rgba(255,255,255,0.08)",
                           borderRadius: "10px",
                           padding: "0.6rem",
                           cursor: "pointer",
@@ -446,12 +454,6 @@ const Upload = () => {
                         >
                           Similarity: {(rec.similarity * 100).toFixed(1)}%
                         </div>
-                        <div
-                          className="muted small"
-                          style={{ marginTop: "0.25rem", fontStyle: "italic" }}
-                        >
-                          {rec.title}
-                        </div>
                       </li>
                     );
                   })}
@@ -461,7 +463,7 @@ const Upload = () => {
           )}
         </aside>
 
-        {/* MAIN CONTENT */}
+        {/* MAIN */}
         <main className="upload-main">
           <div className="about-card">
             <div className="main-head">
@@ -481,18 +483,38 @@ const Upload = () => {
                         onClick={() => isReal && setPreviewDoc(d)}
                         disabled={!isReal}
                         style={{ opacity: isReal ? 1 : 0.5 }}
-                        title={isReal ? "Open preview" : "Saving..."}
+                        title={isReal ? "Open preview" : "Uploading..."}
                       >
                         <div className="doc-name mono">{d.name}</div>
                         <div className="doc-meta muted small">
                           {(d.size / 1024 / 1024).toFixed(2)} MB
                         </div>
-                        {!d.processed && isReal && (
+
+                        {d.uploading && (
                           <div
                             className="muted small"
-                            style={{ fontStyle: "italic" }}
+                            style={{ color: "#60a5fa", fontStyle: "italic" }}
                           >
-                            Processing AI...
+                            Uploading & Processing...
+                          </div>
+                        )}
+                        {!d.uploading &&
+                          !d.processed &&
+                          d.processed !== "error" &&
+                          isReal && (
+                            <div
+                              className="muted small"
+                              style={{ color: "#fbbf24", fontStyle: "italic" }}
+                            >
+                              Processing AI...
+                            </div>
+                          )}
+                        {d.processed === "error" && (
+                          <div
+                            className="muted small"
+                            style={{ color: "#ef4444" }}
+                          >
+                            Upload failed
                           </div>
                         )}
                       </button>
@@ -513,7 +535,7 @@ const Upload = () => {
           </div>
         </main>
 
-        {/* PREVIEW PANEL */}
+        {/* PREVIEW */}
         <aside className={`upload-preview ${previewDoc ? "open" : ""}`}>
           <div className="about-card preview-card">
             <div className="preview-head">
@@ -525,10 +547,7 @@ const Upload = () => {
                 Close
               </button>
             </div>
-
-            {!previewDoc ? (
-              <p className="p muted">Select a document to preview.</p>
-            ) : (
+            {previewDoc ? (
               <div className="iframe-wrap">
                 <iframe
                   title={previewDoc.name}
@@ -537,6 +556,8 @@ const Upload = () => {
                   sandbox="allow-same-origin"
                 />
               </div>
+            ) : (
+              <p className="p muted">Select a document to preview.</p>
             )}
           </div>
         </aside>

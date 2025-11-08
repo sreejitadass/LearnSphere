@@ -1,4 +1,3 @@
-# flask_server.py
 from flask import Flask, request, jsonify
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -10,9 +9,10 @@ from flask_cors import CORS
 import os
 import logging
 import requests
+import numpy as np
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:5173"])
+CORS(app, origins=["http://localhost:5173"])  # Step 1: Fix CORS for React
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,27 +28,39 @@ def get_pdf(pdfs):
     for pdf in pdfs:
         try:
             reader = PdfReader(pdf)
-            for page in reader.pages:
+            for i, page in enumerate(reader.pages):
                 page_text = page.extract_text() or ""
+                if not page_text.strip():
+                    logger.warning(f"Page {i} of {pdf.filename} has no text")
                 text += page_text
         except Exception as e:
-            logger.error(f"PDF error: {e}")
+            logger.error(f"PDF read error {pdf.filename}: {e}")
     return text
 
 def get_text_chunks(text):
     splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=1000)
-    return splitter.split_text(text)
+    chunks = splitter.split_text(text)
+    logger.info(f"Split into {len(chunks)} chunks")
+    return chunks
 
 def get_vector_store(chunks):
-    vector_store = FAISS.from_texts(chunks, embedding=embeddings_model)
-    vector_store.save_local("faiss_index")
+    try:
+        vector_store = FAISS.from_texts(chunks, embedding=embeddings_model)
+        vector_store.save_local("faiss_index")
+        if not os.path.exists("faiss_index/index.faiss"):
+            raise Exception("FAISS index not created")
+        logger.info("FAISS saved")
+    except Exception as e:
+        logger.error(f"FAISS error: {e}")
+        raise
 
 def get_chats():
     prompt_template = """
-    Answer from context only.
+    Answer from context only. If not in context, say "not available".
 
     Context:\n{context}\n
     Question:\n{question}\n
+
     Answer:
     """
     prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
@@ -56,7 +68,7 @@ def get_chats():
 
 def query_vector_store(query):
     if not os.path.exists("faiss_index/index.faiss"):
-        raise Exception("No document uploaded")
+        raise Exception("No document uploaded yet")
     db = FAISS.load_local("faiss_index", embeddings_model, allow_dangerous_deserialization=True)
     docs = db.similarity_search(query)
     chain = get_chats()
@@ -68,57 +80,93 @@ def upload():
     try:
         if "file" not in request.files:
             return jsonify({"error": "No file"}), 400
+
         file = request.files["file"]
+        clerk_user_id = request.form.get("clerkUserId")
+        user_name = request.form.get("userName", "Anonymous")
+        folder = request.form.get("folder", "Uncategorized")
+
         text = get_pdf([file])
         if not text.strip():
-            return jsonify({"error": "Empty PDF"}), 400
+            return jsonify({"error": "No text in PDF"}), 400
+
+        # Generate embedding
+        logger.info(f"Embedding for {file.filename} (text length: {len(text)})")
+        embedding = embeddings_model.embed_query(text)
+        embedding_list = np.array(embedding).tolist()
+        logger.info(f"Embedding OK – length {len(embedding_list)}")
+
+        # Send to Node.js to save in MongoDB
+        payload = {
+            "title": file.filename,
+            "folder": folder,
+            "size": request.content_length or len(text) or 0,
+            "type": file.mimetype or "text/plain",
+            "content": text,
+            "embedding": embedding_list,
+            "processed": len(embedding_list) > 0,
+            "userName": user_name,
+            "clerkUserId": clerk_user_id,
+        }
+
+        logger.info(f"Sending to Node.js: {file.filename}")
+        node_res = requests.post(
+            f"{NODE_API_URL}/api/uploads/with-content",
+            json=payload,
+            timeout=30
+        )
+
+        if not node_res.ok:
+            logger.error(f"Node.js failed: {node_res.status_code} {node_res.text}")
+            return jsonify({"error": "Save failed"}), 500
+
+        saved_doc = node_res.json()
+        logger.info("Saved to MongoDB SUCCESS")
+
+        # Step 2: Process chunks & vector store (your original)
         chunks = get_text_chunks(text)
         get_vector_store(chunks)
-        return jsonify({"message": "Uploaded"}), 200
+
+        # Return the saved doc to frontend
+        return jsonify({
+            "message": "Uploaded and processed",
+            "savedDoc": saved_doc
+        }), 200
+
     except Exception as e:
-        logger.error(f"Upload error: {e}")
+        logger.exception("Upload failed")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/notes", methods=["POST"])
-def notes():
+@app.route("/ask", methods=["POST"])
+def ask():
+    q = request.json.get("question")
+    if not q: return jsonify({"error": "No question"}), 400
     try:
-        filename = request.form.get("filename", "AI Notes")
-        clerk_user_id = request.headers.get("clerkUserId") or request.form.get("clerkUserId")
-        user_name = request.form.get("userName", "Anonymous")
-
-        notes = query_vector_store("""
-        Convert the document into clean, structured study notes.
-        Use headings, bullet points, bold key terms.
-        Make it perfect for revision.
-        """)
-
-        # AUTO-SAVE TO NODE API
-        try:
-            token = request.headers.get("Authorization")
-            payload = {
-                "title": f"{filename.replace('.pdf', '')} - AI Notes",
-                "content": notes,
-                "userName": user_name,
-                "clerkUserId": clerk_user_id or None
-            }
-            headers = {"Content-Type": "application/json"}
-            if token:
-                headers["Authorization"] = token
-
-            requests.post(
-                f"{NODE_API_URL}/api/notes",
-                json=payload,
-                headers=headers,
-                timeout=10
-            )
-            logger.info("AI notes saved to MongoDB")
-        except Exception as e:
-            logger.warning(f"Auto-save failed: {e}")
-
-        return jsonify({"notes": notes})
+        ans = query_vector_store(q)
+        return jsonify({"response": ans})
     except Exception as e:
-        logger.error(f"Notes error: {e}")
-        return jsonify({"notes": "Error generating notes."}), 500
+        return jsonify({"error": "Query failed"}), 500
+
+@app.route("/summary", methods=["POST"])
+def summary():
+    try:
+        s = query_vector_store("Summarize the entire document with key points.")
+        return jsonify({"summary": s})
+    except Exception as e:
+        return jsonify({"error": "Summary failed"}), 500
+
+@app.route("/flashcards", methods=["POST"])
+def flashcards():
+    try:
+        f = query_vector_store("""
+Extract key concepts and generate flashcards:
+Flashcard [N]:
+Question: [clear question]
+Answer: [concise answer]
+        """.strip())
+        return jsonify({"flashcards": f})
+    except Exception as e:
+        return jsonify({"error": "Flashcards failed"}), 500
 
 if __name__ == "__main__":
     os.makedirs("faiss_index", exist_ok=True)
