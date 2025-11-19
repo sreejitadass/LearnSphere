@@ -18,6 +18,15 @@ import {
   Trash2,
 } from "lucide-react";
 import { useUser } from "@clerk/clerk-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 
@@ -56,6 +65,14 @@ const Dashboard = () => {
     weeklyProgress: 0,
   });
 
+  // NEW: Full progress prediction data
+  const [progressData, setProgressData] = useState({
+    history: [],
+    prediction: [],
+    nextWeek: { studyScore: 0, grade: 0 },
+    message: "Loading your future...",
+  });
+
   const [newTodo, setNewTodo] = useState("");
 
   const fetchAll = async () => {
@@ -71,6 +88,7 @@ const Dashboard = () => {
         weeklyRes,
         uploadsRes,
         todosRes,
+        progressRes,
       ] = await Promise.all([
         fetch(`${API_BASE}/api/streak?clerkUserId=${userId}`, { headers }),
         fetch(`${API_BASE}/api/stats?clerkUserId=${userId}`, { headers }),
@@ -85,9 +103,12 @@ const Dashboard = () => {
           headers,
         }),
         fetch(`${API_BASE}/api/todos?clerkUserId=${userId}`, { headers }),
+        fetch(`${API_BASE}/api/analytics/progress?clerkUserId=${userId}`, {
+          headers,
+        }),
       ]);
 
-      const [streak, statsData, upcoming, weekly, uploads, todos] =
+      const [streak, statsData, upcoming, weekly, uploads, todos, progress] =
         await Promise.all([
           streakRes.json(),
           statsRes.json(),
@@ -95,9 +116,10 @@ const Dashboard = () => {
           weeklyRes.json(),
           uploadsRes.json(),
           todosRes.json(),
+          progressRes.json(),
         ]);
 
-      const progress = weekly.data.reduce((a, b) => a + b, 0);
+      const weeklyProgress = weekly.data.reduce((a, b) => a + b, 0);
 
       setStats({
         streak: streak?.currentStreak || 0,
@@ -110,10 +132,17 @@ const Dashboard = () => {
         recentUploads: uploads || [],
         todos: todos || [],
         weeklyGoal: 15,
-        weeklyProgress: progress,
+        weeklyProgress,
+      });
+
+      setProgressData({
+        history: progress.history || [],
+        prediction: progress.prediction || [],
+        nextWeek: progress.nextWeek || { studyScore: 0, grade: 0 },
+        message: progress.message || "Keep grinding — you're unstoppable",
       });
     } catch (err) {
-      console.error("Dashboard load failed");
+      console.error("Dashboard load failed:", err);
     }
   };
 
@@ -172,6 +201,22 @@ const Dashboard = () => {
 
   const formatDate = (d) =>
     new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  // Chart data: past + future weeks with both metrics
+  const chartData = [
+    ...(progressData.history?.map((h) => ({
+      name: h.week,
+      grade: h.grade,
+      studyScore: h.studyScore,
+      type: "past",
+    })) || []),
+    ...(progressData.prediction?.map((p) => ({
+      name: p.week,
+      grade: p.grade,
+      studyScore: p.studyScore,
+      type: "future",
+    })) || []),
+  ];
 
   return (
     <div className="epic-dashboard">
@@ -260,6 +305,164 @@ const Dashboard = () => {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* PERFORMANCE PREDICTION CHART — THE CROWN JEWEL */}
+      <div
+        className="epic-card"
+        style={{
+          margin: "1.5rem 0",
+          padding: "1.5rem",
+          background: "rgba(167, 139, 250, 0.08)",
+          border: "1px solid rgba(167, 139, 250, 0.3)",
+          borderRadius: "16px",
+        }}
+      >
+        <div
+          className="card-header"
+          style={{
+            marginBottom: "1rem",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <TrendingUp size={28} style={{ color: "#a78bfa" }} />
+            <h3 style={{ color: "#e9d5ff", fontSize: "1.4rem", margin: 0 }}>
+              Performance Forecast
+            </h3>
+          </div>
+          {progressData.nextWeek.studyScore > 0 && (
+            <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
+              <div style={{ color: "#c084fc", fontWeight: "600" }}>
+                Next Week Prediction
+              </div>
+              <div
+                style={{
+                  color: "#fff",
+                  fontSize: "1.1rem",
+                  fontWeight: "bold",
+                }}
+              >
+                Score: {progressData.nextWeek.studyScore} • Grade:{" "}
+                {progressData.nextWeek.grade}/100
+              </div>
+            </div>
+          )}
+        </div>
+
+        {chartData.length === 0 ? (
+          <p
+            className="muted"
+            style={{ textAlign: "center", padding: "3rem 0" }}
+          >
+            Loading your future...
+          </p>
+        ) : (
+          <>
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart
+                data={chartData}
+                margin={{ top: 10, right: 40, left: 0, bottom: 0 }}
+              >
+                <CartesianGrid strokeDasharray="4 4" stroke="#333" />
+                <XAxis dataKey="name" stroke="#aaa" fontSize={13} />
+                <YAxis
+                  yAxisId="grade"
+                  domain={[40, 100]}
+                  stroke="#a78bfa"
+                  fontSize={12}
+                  label={{
+                    value: "Grade",
+                    angle: -90,
+                    position: "insideLeft",
+                    style: { fill: "#a78bfa" },
+                  }}
+                />
+                <YAxis
+                  yAxisId="score"
+                  orientation="right"
+                  domain={[0, 80]}
+                  stroke="#f472b6"
+                  fontSize={12}
+                  label={{
+                    value: "Study Score",
+                    angle: 90,
+                    position: "insideRight",
+                    style: { fill: "#f472b6" },
+                  }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: "#111",
+                    border: "1px solid #a78bfa",
+                    borderRadius: "12px",
+                  }}
+                  labelStyle={{ color: "#e9d5ff" }}
+                  formatter={(value, name) => [
+                    value,
+                    name === "grade" ? "Grade (/100)" : "Study Score",
+                  ]}
+                />
+                {/* Past Grade */}
+                <Line
+                  yAxisId="grade"
+                  type="monotone"
+                  dataKey="grade"
+                  stroke="#a78bfa"
+                  strokeWidth={4}
+                  dot={{ fill: "#a78bfa", r: 7 }}
+                  data={chartData.filter((d) => d.type === "past")}
+                  name="Grade"
+                />
+                {/* Past Study Score */}
+                <Line
+                  yAxisId="score"
+                  type="monotone"
+                  dataKey="studyScore"
+                  stroke="#f472b6"
+                  strokeWidth={3}
+                  dot={{ fill: "#f472b6", r: 6 }}
+                  data={chartData.filter((d) => d.type === "past")}
+                  name="Study Score"
+                />
+                {/* Future Dashed */}
+                <Line
+                  yAxisId="grade"
+                  type="monotone"
+                  dataKey="grade"
+                  stroke="#c084fc"
+                  strokeWidth={3}
+                  strokeDasharray="10 6"
+                  dot={false}
+                  data={chartData.filter((d) => d.type === "future")}
+                />
+                <Line
+                  yAxisId="score"
+                  type="monotone"
+                  dataKey="studyScore"
+                  stroke="#f9a8d4"
+                  strokeWidth={3}
+                  strokeDasharray="10 6"
+                  dot={false}
+                  data={chartData.filter((d) => d.type === "future")}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+            <p
+              className="muted small"
+              style={{
+                textAlign: "center",
+                marginTop: "1.2rem",
+                color: "#d8b4fe",
+                fontStyle: "italic",
+              }}
+            >
+              {progressData.message}
+            </p>
+          </>
+        )}
       </div>
 
       {/* RECENT UPLOADS + TODO */}

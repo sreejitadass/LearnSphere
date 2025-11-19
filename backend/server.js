@@ -7,6 +7,7 @@ const cors = require("cors");
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
+const { PolynomialRegression } = require("ml-regression");
 
 if (!MONGODB_URI) {
   console.error("Missing MONGODB_URI in .env");
@@ -21,6 +22,31 @@ app.use(express.json());
 
 // Health
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+// Helper: Get start of week (Monday)
+function getMonday(d) {
+  const date = new Date(d);
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(date.setDate(diff));
+}
+
+// Helper: Generate dummy realistic data
+function generateDummyProgress() {
+  const weeks = [];
+  const baseScore = 15;
+  for (let i = 0; i < 6; i++) {
+    const score = Math.min(70, baseScore + i * 9 + Math.random() * 8);
+    const grade = Math.min(98, 55 + score * 0.8 + Math.random() * 5);
+    weeks.push({
+      week: `Week ${i + 1}`,
+      studyScore: Math.round(score),
+      predictedGrade: Math.round(grade),
+      isReal: false,
+    });
+  }
+  return weeks;
+}
 
 // --- Note Model ---
 const noteSchema = new mongoose.Schema(
@@ -569,16 +595,23 @@ app.get("/api/stats", async (req, res) => {
     const { clerkUserId } = req.query;
     if (!clerkUserId)
       return res.status(400).json({ error: "clerkUserId required" });
-    const uploads = await UploadDoc.countDocuments({ clerkUserId });
-    const todos = await Todo.countDocuments({ clerkUserId, done: true });
-    return res.json({
-      docsStudied: uploads,
-      focusTime: "0h 0m",
-      tasksDone: todos,
+
+    const [uploadsCount, todosDone, focusData] = await Promise.all([
+      UploadDoc.countDocuments({ clerkUserId }),
+      Todo.countDocuments({ clerkUserId, done: true }),
+      fetch(
+        `http://localhost:3000/api/focus/weekly?clerkUserId=${clerkUserId}`
+      ).then((r) => r.json()),
+    ]);
+
+    res.json({
+      docsStudied: uploadsCount,
+      focusTime: focusData.focusTime || "0h 0m",
+      tasksDone: todosDone,
     });
   } catch (e) {
-    console.error("stats get error:", e);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("stats error:", e);
+    res.status(500).json({ error: "server error" });
   }
 });
 
@@ -654,6 +687,182 @@ app.get("/api/analytics/folders", async (req, res) => {
     biggestCount: biggest.count,
     daysLeft,
   });
+});
+
+// === REPLACE YOUR ENTIRE /api/analytics/progress WITH THIS ===
+
+app.get("/api/analytics/progress", async (req, res) => {
+  try {
+    const { clerkUserId } = req.query;
+    if (!clerkUserId)
+      return res.status(400).json({ error: "clerkUserId required" });
+
+    const now = new Date();
+    const eightWeeksAgo = new Date(now);
+    eightWeeksAgo.setDate(now.getDate() - 56);
+
+    const [uploads, notes, todos, events] = await Promise.all([
+      UploadDoc.find({ clerkUserId, createdAt: { $gte: eightWeeksAgo } }),
+      Note.find({ clerkUserId, createdAt: { $gte: eightWeeksAgo } }),
+      Todo.find({
+        clerkUserId,
+        done: true,
+        updatedAt: { $gte: eightWeeksAgo },
+      }),
+      PlannerEvent.find({ clerkUserId, date: { $gte: eightWeeksAgo } }),
+    ]);
+
+    const weeklyData = {};
+    const monday = getMonday(eightWeeksAgo);
+
+    for (let i = 0; i < 8; i++) {
+      const weekStart = new Date(monday);
+      weekStart.setDate(monday.getDate() + i * 7);
+      const key = weekStart.toISOString().split("T")[0];
+      weeklyData[key] = {
+        uploads: 0,
+        notes: 0,
+        todos: 0,
+        events: 0,
+        weekLabel: `Week ${i + 1}`,
+      };
+    }
+
+    [...uploads, ...notes, ...todos, ...events].forEach((item) => {
+      const date = new Date(item.createdAt || item.updatedAt || item.date);
+      const key = getMonday(date).toISOString().split("T")[0];
+      if (weeklyData[key]) {
+        if (item instanceof UploadDoc) weeklyData[key].uploads++;
+        if (item instanceof Note) weeklyData[key].notes++;
+        if (item instanceof Todo) weeklyData[key].todos++;
+        if (item instanceof PlannerEvent) weeklyData[key].events++;
+      }
+    });
+
+    const history = Object.values(weeklyData).map((week) => {
+      const studyScore = Math.round(
+        week.uploads * 3 + week.notes * 5 + week.todos * 2 + week.events * 1.5
+      );
+      return {
+        week: week.weekLabel,
+        studyScore,
+        grade: Math.min(
+          99,
+          Math.round(50 + studyScore * 0.9 + Math.random() * 4)
+        ),
+        isReal: studyScore > 0,
+      };
+    });
+
+    const realWeeks = history.filter((w) => w.isReal);
+    if (realWeeks.length < 3) {
+      return res.json({
+        history: generateDummyProgress(),
+        nextWeek: { studyScore: 55, grade: 95 },
+        message: "Keep grinding — top students average 55+ study score/week",
+      });
+    }
+
+    // REGRESSION ON STUDY SCORE
+    const x = history.map((_, i) => i + 1);
+    const yScore = history.map((w) => w.studyScore);
+    const yGrade = history.map((w) => w.grade);
+
+    const regScore = new PolynomialRegression(x, yScore, 2);
+    const regGrade = new PolynomialRegression(x, yGrade, 2);
+
+    const nextWeekNum = 9;
+    const nextStudyScore = Math.max(
+      0,
+      Math.round(regScore.predict(nextWeekNum))
+    );
+    const nextGrade = Math.min(100, Math.round(regGrade.predict(nextWeekNum)));
+
+    const prediction = [];
+    for (let i = 9; i <= 12; i++) {
+      prediction.push({
+        week: i === 12 ? "Finals" : `Week ${i}`,
+        studyScore: Math.max(0, Math.round(regScore.predict(i))),
+        grade: Math.min(100, Math.round(regGrade.predict(i))),
+      });
+    }
+
+    res.json({
+      history,
+      prediction,
+      nextWeek: { studyScore: nextStudyScore, grade: nextGrade },
+      message:
+        nextStudyScore >= 50
+          ? "You're on fire — keep this up!"
+          : "Push harder next week to stay on track",
+    });
+  } catch (e) {
+    console.error("Progress error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Focus Time Model + Endpoints (copy this entire block)
+const focusSchema = new mongoose.Schema(
+  {
+    clerkUserId: { type: String, required: true, index: true },
+    date: { type: String, required: true },
+    seconds: { type: Number, default: 0 },
+  },
+  { timestamps: true }
+);
+
+const Focus = mongoose.model("Focus", focusSchema);
+
+app.post("/api/focus/ping", async (req, res) => {
+  try {
+    const { clerkUserId, seconds } = req.body;
+    if (!clerkUserId || !seconds)
+      return res.status(400).json({ error: "missing data" });
+
+    const today = new Date().toISOString().split("T")[0];
+
+    await Focus.findOneAndUpdate(
+      { clerkUserId, date: today },
+      { $inc: { seconds: Math.floor(seconds) } },
+      { upsert: true }
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: "server error" });
+  }
+});
+
+app.get("/api/focus/weekly", async (req, res) => {
+  try {
+    const { clerkUserId } = req.query;
+    if (!clerkUserId)
+      return res.status(400).json({ error: "clerkUserId required" });
+
+    const startOfWeek = new Date();
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay() + 1);
+    startOfWeek.setHours(0, 0, 0, 0);
+    const weekStart = startOfWeek.toISOString().split("T")[0];
+
+    const result = await Focus.aggregate([
+      { $match: { clerkUserId, date: { $gte: weekStart } } },
+      { $group: { _id: null, totalSeconds: { $sum: "$seconds" } } },
+    ]);
+
+    const totalSeconds = result[0]?.totalSeconds || 0;
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+    res.json({
+      focusTime: `${hours}h ${minutes}m`,
+      totalSeconds,
+      hours,
+      minutes,
+    });
+  } catch (e) {
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // Startup
