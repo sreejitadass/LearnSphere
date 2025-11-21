@@ -1,14 +1,12 @@
 // src/pages/Upload.jsx
 import React, { useCallback, useMemo, useState, useEffect } from "react";
-import { FaMagic } from "react-icons/fa";
+import { FaMagic, FaFolder, FaTrash, FaEdit } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { useAuth, useUser } from "@clerk/clerk-react";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 const FLASK_URL = "http://localhost:5001";
 const UNCATEGORIZED = "Uncategorized";
-
-const toObjectURL = (file) => URL.createObjectURL(file);
 
 const Upload = () => {
   const { userId, isLoaded } = useAuth();
@@ -22,15 +20,15 @@ const Upload = () => {
   const [newFolder, setNewFolder] = useState("");
   const [renameFolderId, setRenameFolderId] = useState("");
   const [renameFolderNew, setRenameFolderNew] = useState("");
-  const [previewDoc, setPreviewDoc] = useState(null);
+  const [selectedDoc, setSelectedDoc] = useState(null); // ← replaced previewDoc
   const [recommendations, setRecommendations] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(false);
 
   const navigate = useNavigate();
-  const handleAiAppRedirect = () => navigate("/ai");
-  const handleCreateNotes = () => navigate("/notes");
+  const goToAI = () => navigate("/ai");
+  const goToNotes = () => navigate("/notes");
 
-  /* ==================== FETCH UPLOADS ==================== */
+  // Fetch uploads
   useEffect(() => {
     if (!isLoaded || !userId) return;
 
@@ -39,11 +37,7 @@ const Upload = () => {
         const res = await fetch(
           `${API_BASE}/api/uploads?clerkUserId=${userId}`
         );
-        if (!res.ok) {
-          setDocs([]);
-          setFolders([UNCATEGORIZED]);
-          return;
-        }
+        if (!res.ok) throw new Error("Failed");
         const items = await res.json();
 
         const normalized = items.map((it) => ({
@@ -52,7 +46,6 @@ const Upload = () => {
           size: it.size || 0,
           folder: it.folder || UNCATEGORIZED,
           url: it.url || "",
-          type: it.type || "",
           processed: it.processed || false,
         }));
 
@@ -63,7 +56,7 @@ const Upload = () => {
         ]);
         setFolders(Array.from(uniqueFolders));
       } catch (e) {
-        console.error("Fetch uploads error:", e);
+        console.error(e);
         setDocs([]);
         setFolders([UNCATEGORIZED]);
       }
@@ -72,9 +65,9 @@ const Upload = () => {
     fetchUploads();
   }, [isLoaded, userId]);
 
-  /* ==================== RECOMMENDATIONS ==================== */
+  // Fetch recommendations when a doc is selected
   useEffect(() => {
-    if (!previewDoc?.id || previewDoc.id.length !== 24) {
+    if (!selectedDoc?.id || selectedDoc.id.length !== 24) {
       setRecommendations([]);
       setLoadingRecs(false);
       return;
@@ -86,21 +79,21 @@ const Upload = () => {
         const res = await fetch(`${API_BASE}/api/recommend`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ clerkUserId: userId, docId: previewDoc.id }),
+          body: JSON.stringify({ clerkUserId: userId, docId: selectedDoc.id }),
         });
         const data = await res.json();
         setRecommendations(data.recommendations || []);
       } catch (e) {
-        console.error("Recs error:", e);
+        console.error(e);
       } finally {
         setLoadingRecs(false);
       }
     };
 
     fetchRecs();
-  }, [previewDoc?.id, userId]);
+  }, [selectedDoc?.id, userId]);
 
-  /* ==================== MEMOIZED VALUES ==================== */
+  // Memoized helpers
   const sortedFolders = useMemo(() => {
     const rest = folders.filter((f) => f !== UNCATEGORIZED).sort();
     return [UNCATEGORIZED, ...rest];
@@ -112,44 +105,37 @@ const Upload = () => {
   );
 
   const countsByFolder = useMemo(() => {
-    const map = new Map(sortedFolders.map((f) => [f, 0]));
+    const map = new Map();
+    sortedFolders.forEach((f) => map.set(f, 0));
     docs.forEach((d) => map.set(d.folder, (map.get(d.folder) || 0) + 1));
     return map;
   }, [docs, sortedFolders]);
 
-  /* ==================== FILE INGESTION — FINAL FIXED ==================== */
+  // File upload
   const ingestFiles = useCallback(
     async (fileList, targetFolder) => {
-      const incoming = Array.from(fileList || []);
-      if (!incoming.length) return;
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
 
-      // 1. Create temp docs
-      const tempDocs = incoming.map((f) => {
-        const url = toObjectURL(f);
-        const tempId = `temp-${Date.now()}-${Math.random()}`;
-        return {
-          id: tempId,
-          name: f.name,
-          size: f.size,
-          folder: targetFolder,
-          url,
-          type: f.type,
-          processed: false,
-          uploading: true,
-        };
-      });
+      const tempDocs = files.map((f) => ({
+        id: `temp-${Date.now()}-${Math.random()}`,
+        name: f.name,
+        size: f.size,
+        folder: targetFolder,
+        url: URL.createObjectURL(f),
+        processed: false,
+        uploading: true,
+      }));
 
-      // 2. Add all at once
       setDocs((prev) => [...prev, ...tempDocs]);
 
-      // 3. Upload each
-      for (let i = 0; i < incoming.length; i++) {
-        const f = incoming[i];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
         const tempId = tempDocs[i].id;
 
         const formData = new FormData();
-        formData.append("file", f);
-        formData.append("clerkUserId", userId || "");
+        formData.append("file", file);
+        formData.append("clerkUserId", userId);
         formData.append("userName", displayName);
         formData.append("folder", targetFolder);
 
@@ -158,37 +144,33 @@ const Upload = () => {
             method: "POST",
             body: formData,
           });
-
-          if (!res.ok) throw new Error("Upload failed");
+          if (!res.ok) throw new Error("Failed");
 
           const data = await res.json();
           const saved = data.savedDoc;
 
           if (saved?._id) {
             setDocs((prev) =>
-              prev.map((doc) =>
-                doc.id === tempId
+              prev.map((d) =>
+                d.id === tempId
                   ? {
-                      ...doc,
+                      ...d,
                       id: saved._id,
                       processed: saved.processed || false,
                       uploading: false,
                     }
-                  : doc
+                  : d
               )
             );
 
             if (!folders.includes(targetFolder)) {
-              setFolders((prev) => [...prev, targetFolder]);
+              setFolders((f) => [...f, targetFolder]);
             }
           }
-        } catch (e) {
-          console.error("Upload error:", e);
+        } catch (err) {
           setDocs((prev) =>
-            prev.map((doc) =>
-              doc.id === tempId
-                ? { ...doc, uploading: false, processed: "error" }
-                : doc
+            prev.map((d) =>
+              d.id === tempId ? { ...d, uploading: false, error: true } : d
             )
           );
         }
@@ -197,19 +179,15 @@ const Upload = () => {
     [userId, displayName, folders]
   );
 
-  const onInput = (e) => ingestFiles(e.target.files, activeFolder);
-  const onDrop = (e) => {
+  const handleDrop = (e) => {
     e.preventDefault();
     setDragOver(false);
     ingestFiles(e.dataTransfer.files, activeFolder);
   };
-  const onDragOver = (e) => {
-    e.preventDefault();
-    setDragOver(true);
-  };
-  const onDragLeave = () => setDragOver(false);
 
-  /* ==================== FOLDER CRUD ==================== */
+  const handleFileInput = (e) => ingestFiles(e.target.files, activeFolder);
+
+  // Folder actions
   const createFolder = () => {
     const name = newFolder.trim();
     if (!name || name === UNCATEGORIZED || folders.includes(name)) return;
@@ -245,68 +223,63 @@ const Upload = () => {
     if (activeFolder === name) setActiveFolder(UNCATEGORIZED);
   };
 
-  /* ==================== DELETE DOC ==================== */
   const removeDoc = async (id) => {
     if (!id || id.length !== 24) return;
     try {
-      const res = await fetch(`${API_BASE}/api/uploads/${id}`, {
-        method: "DELETE",
-      });
-      if (res.ok || res.status === 204) {
-        setDocs((prev) => prev.filter((d) => d.id !== id));
-        if (previewDoc?.id === id) setPreviewDoc(null);
-      }
+      await fetch(`${API_BASE}/api/uploads/${id}`, { method: "DELETE" });
+      setDocs((prev) => prev.filter((d) => d.id !== id));
+      if (selectedDoc?.id === id) setSelectedDoc(null);
     } catch (e) {
       alert("Delete failed");
     }
   };
 
-  /* ==================== RENDER ==================== */
   return (
     <div className="upload layout">
       <header className="upload-head">
         <div>
-          <h1 className="h2">Documents</h1>
-          <p className="sub small">
-            Drag files or choose from device. Anything unassigned goes to “
-            {UNCATEGORIZED}”.
-          </p>
+          <h1 className="h2">My Documents</h1>
+          <p className="sub">Upload, organize, and study smarter.</p>
         </div>
         <div className="upload-actions">
           <button
             className="btn ghost"
-            onClick={() => document.getElementById("file-input")?.click()}
+            onClick={() => document.getElementById("file-input").click()}
           >
-            Choose files
+            + Upload Files
           </button>
-          <button className="btn ghost" onClick={handleCreateNotes}>
-            + Create notes
+          <button className="btn ghost" onClick={goToNotes}>
+            Create Notes
           </button>
-          <button className="btn primary" onClick={handleAiAppRedirect}>
-            <FaMagic style={{ marginRight: ".5rem" }} />
+          <button className="btn primary" onClick={goToAI}>
+            <FaMagic style={{ marginRight: "0.5rem" }} />
             LearnSphere AI
           </button>
           <input
             id="file-input"
             type="file"
             multiple
-            onChange={onInput}
+            onChange={handleFileInput}
             style={{ display: "none" }}
           />
         </div>
       </header>
 
-      <div className="upload-body">
-        {/* SIDEBAR */}
+      <div className="upload-body" style={{ gridTemplateColumns: "280px 1fr" }}>
+        {/* Sidebar */}
         <aside className="upload-side">
           <div className="about-card">
             <div className="side-head">
-              <h3 className="t3">Folders</h3>
+              <h3 className="t3">
+                <FaFolder style={{ marginRight: "0.5rem", color: "#a78bfa" }} />
+                Folders
+              </h3>
             </div>
+
             <div className="new-folder">
               <input
                 className="input"
-                placeholder="New folder"
+                placeholder="New folder name"
                 value={newFolder}
                 onChange={(e) => setNewFolder(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && createFolder()}
@@ -315,14 +288,16 @@ const Upload = () => {
                 Add
               </button>
             </div>
+
             <ul className="folder-list">
               {sortedFolders.map((name) => {
-                const selected = name === activeFolder;
+                const isActive = name === activeFolder;
                 const count = countsByFolder.get(name) || 0;
+
                 return (
                   <li
                     key={name}
-                    className={`folder-tile ${selected ? "selected" : ""}`}
+                    className={`folder-tile ${isActive ? "selected" : ""}`}
                   >
                     {renameFolderId === name ? (
                       <div className="rename-row">
@@ -345,40 +320,33 @@ const Upload = () => {
                         >
                           Save
                         </button>
-                        <button
-                          className="btn ghost small"
-                          onClick={() => {
-                            setRenameFolderId("");
-                            setRenameFolderNew("");
-                          }}
-                        >
-                          Cancel
-                        </button>
                       </div>
                     ) : (
-                      <button
-                        className="folder-btn"
-                        onClick={() => setActiveFolder(name)}
-                      >
-                        <span className="mono">{name}</span>
-                        <span className="badge">{count}</span>
-                      </button>
-                    )}
-                    {name !== UNCATEGORIZED && renameFolderId !== name && (
-                      <div className="folder-actions">
+                      <>
                         <button
-                          className="btn ghost small"
-                          onClick={() => startRename(name)}
+                          className="folder-btn"
+                          onClick={() => setActiveFolder(name)}
                         >
-                          Rename
+                          <span className="mono">{name}</span>
+                          <span className="badge">{count}</span>
                         </button>
-                        <button
-                          className="btn ghost small"
-                          onClick={() => deleteFolder(name)}
-                        >
-                          Delete
-                        </button>
-                      </div>
+                        {name !== UNCATEGORIZED && (
+                          <div className="folder-actions">
+                            <button
+                              className="btn ghost small"
+                              onClick={() => startRename(name)}
+                            >
+                              <FaEdit />
+                            </button>
+                            <button
+                              className="btn ghost small"
+                              onClick={() => deleteFolder(name)}
+                            >
+                              <FaTrash />
+                            </button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </li>
                 );
@@ -387,180 +355,122 @@ const Upload = () => {
           </div>
 
           <div
-            role="button"
-            tabIndex={0}
             className={`dropzone compact ${dragOver ? "over" : ""}`}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ")
-                document.getElementById("file-input")?.click();
+            onDrop={handleDrop}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
             }}
+            onDragLeave={() => setDragOver(false)}
           >
-            <div className="dz-title">Upload to</div>
+            <div className="dz-title">Drop files here</div>
             <div className="dz-meta">
-              <strong>{activeFolder}</strong>
+              to upload to <strong>{activeFolder}</strong>
             </div>
           </div>
-
-          {previewDoc && previewDoc.id.length === 24 && (
-            <div className="about-card recommender-card">
-              <h4 className="t3" style={{ margin: "0 0 0.75rem" }}>
-                Recommended Materials
-              </h4>
-              {loadingRecs ? (
-                <p className="muted small">Loading...</p>
-              ) : recommendations.length === 0 ? (
-                <p className="muted small">
-                  {!previewDoc.processed
-                    ? "Processing AI..."
-                    : "No similar docs found."}
-                </p>
-              ) : (
-                <ul
-                  style={{
-                    margin: 0,
-                    padding: 0,
-                    listStyle: "none",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.75rem",
-                  }}
-                >
-                  {recommendations.map((rec) => {
-                    const targetDoc = docs.find((d) => d.id === rec.docId);
-                    return (
-                      <li
-                        key={rec.docId}
-                        style={{
-                          background: "rgba(255,255,255,0.04)",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: "10px",
-                          padding: "0.6rem",
-                          cursor: "pointer",
-                        }}
-                        onClick={() => targetDoc && setPreviewDoc(targetDoc)}
-                      >
-                        <div
-                          className="mono"
-                          style={{ fontWeight: 600, fontSize: "0.9rem" }}
-                        >
-                          {rec.title}
-                        </div>
-                        <div
-                          className="muted small"
-                          style={{ marginTop: "0.25rem" }}
-                        >
-                          Similarity: {(rec.similarity * 100).toFixed(1)}%
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          )}
         </aside>
 
-        {/* MAIN */}
+        {/* Main Content */}
         <main className="upload-main">
           <div className="about-card">
             <div className="main-head">
               <h3 className="t3">{activeFolder}</h3>
-              <div className="muted small">{docsInActive.length} file(s)</div>
+              <div className="muted small">
+                {docsInActive.length} document
+                {docsInActive.length !== 1 ? "s" : ""}
+              </div>
             </div>
-            {docsInActive.length === 0 ? (
-              <p className="p muted">No documents in this folder yet.</p>
-            ) : (
-              <ul className="doc-grid">
-                {docsInActive.map((d) => {
-                  const isReal = d.id.length === 24;
-                  return (
-                    <li key={d.id} className="doc-card">
-                      <button
-                        className="doc-body"
-                        onClick={() => isReal && setPreviewDoc(d)}
-                        disabled={!isReal}
-                        style={{ opacity: isReal ? 1 : 0.5 }}
-                        title={isReal ? "Open preview" : "Uploading..."}
-                      >
-                        <div className="doc-name mono">{d.name}</div>
-                        <div className="doc-meta muted small">
-                          {(d.size / 1024 / 1024).toFixed(2)} MB
-                        </div>
 
-                        {d.uploading && (
-                          <div
-                            className="muted small"
-                            style={{ color: "#60a5fa", fontStyle: "italic" }}
-                          >
-                            Uploading & Processing...
-                          </div>
+            {docsInActive.length === 0 ? (
+              <div className="empty-state">
+                <p className="p muted">This folder is empty.</p>
+                <p className="small muted">
+                  Drag files here or click "Upload Files" to get started.
+                </p>
+              </div>
+            ) : (
+              <div className="doc-grid">
+                {docsInActive.map((doc) => {
+                  const isReal = doc.id.length === 24;
+                  const isSelected = selectedDoc?.id === doc.id;
+
+                  return (
+                    <div
+                      key={doc.id}
+                      className={`doc-card ${isSelected ? "selected" : ""} ${
+                        !isReal ? "uploading" : ""
+                      }`}
+                      onClick={() => isReal && setSelectedDoc(doc)}
+                      style={{ cursor: isReal ? "pointer" : "default" }}
+                    >
+                      <div className="doc-icon">PDF</div>
+                      <div className="doc-info">
+                        <div className="doc-name mono">{doc.name}</div>
+                        <div className="doc-size muted small">
+                          {(doc.size / 1024 / 1024).toFixed(2)} MB
+                        </div>
+                        {doc.uploading && (
+                          <div className="status">Uploading...</div>
                         )}
-                        {!d.uploading &&
-                          !d.processed &&
-                          d.processed !== "error" &&
-                          isReal && (
-                            <div
-                              className="muted small"
-                              style={{ color: "#fbbf24", fontStyle: "italic" }}
-                            >
-                              Processing AI...
-                            </div>
-                          )}
-                        {d.processed === "error" && (
-                          <div
-                            className="muted small"
-                            style={{ color: "#ef4444" }}
-                          >
-                            Upload failed
-                          </div>
+                        {!doc.uploading && !doc.processed && isReal && (
+                          <div className="status">Processing AI...</div>
                         )}
-                      </button>
-                      <div className="doc-actions">
-                        <button
-                          className="btn ghost small"
-                          onClick={() => removeDoc(d.id)}
-                          disabled={!isReal}
-                        >
-                          Remove
-                        </button>
+                        {doc.error && (
+                          <div className="status error">Failed</div>
+                        )}
                       </div>
-                    </li>
+                      {isReal && (
+                        <button
+                          className="btn ghost small delete-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeDoc(doc.id);
+                          }}
+                        >
+                          <FaTrash />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
-              </ul>
+
+                {/* Recommended Documents (only show when one is selected) */}
+                {selectedDoc && recommendations.length > 0 && (
+                  <>
+                    <div className="recs-header">
+                      <h4>Recommended for you</h4>
+                      <button
+                        className="btn ghost small"
+                        onClick={() => setSelectedDoc(null)}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    {recommendations.map((rec) => {
+                      const target = docs.find((d) => d.id === rec.docId);
+                      if (!target) return null;
+                      return (
+                        <div
+                          key={rec.docId}
+                          className="doc-card recommended"
+                          onClick={() => setSelectedDoc(target)}
+                        >
+                          <div className="doc-icon rec">AI</div>
+                          <div className="doc-info">
+                            <div className="doc-name mono">{rec.title}</div>
+                            <div className="similarity">
+                              Similarity: {(rec.similarity * 100).toFixed(0)}%
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
             )}
           </div>
         </main>
-
-        {/* PREVIEW */}
-        <aside className={`upload-preview ${previewDoc ? "open" : ""}`}>
-          <div className="about-card preview-card">
-            <div className="preview-head">
-              <h4 className="t3">{previewDoc?.name || "Preview"}</h4>
-              <button
-                className="btn ghost small"
-                onClick={() => setPreviewDoc(null)}
-              >
-                Close
-              </button>
-            </div>
-            {previewDoc ? (
-              <div className="iframe-wrap">
-                <iframe
-                  title={previewDoc.name}
-                  src={previewDoc.url}
-                  className="doc-iframe"
-                  sandbox="allow-same-origin"
-                />
-              </div>
-            ) : (
-              <p className="p muted">Select a document to preview.</p>
-            )}
-          </div>
-        </aside>
       </div>
     </div>
   );
