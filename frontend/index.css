@@ -3345,3 +3345,119 @@ summary:focus-visible {
   font-style: italic;
   color: #94a3b8;
 }
+
+.multilang-hero-search {
+  position: relative;
+  margin: 2rem auto;
+  max-width: 800px;
+  padding: 2rem;
+  background: linear-gradient(
+    135deg,
+    rgba(167, 139, 250, 0.15),
+    rgba(139, 92, 246, 0.1)
+  );
+  border-radius: 20px;
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  text-align: center;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.search-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at center,
+    rgba(167, 139, 250, 0.3),
+    transparent 70%
+  );
+  border-radius: 20px;
+  pointer-events: none;
+}
+
+.search-hint {
+  margin: 0 0 1.5rem;
+  font-size: 1.1rem;
+  color: #e9d5ff;
+  font-weight: 500;
+}
+
+.highlight {
+  background: linear-gradient(90deg, #c084fc, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+}
+
+.mult  /* This makes the search bar look premium */
+.multilang-search {
+  display: flex;
+  gap: 0.75rem;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.lang-select {
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(167, 139, 250, 0.5);
+  background: rgba(30, 30, 50, 0.8);
+  color: white;
+  font-size: 1rem;
+}
+
+.lang-select:focus,
+.input:focus {
+  outline: 2px solid #a78bfa;
+}
+
+.ai-chat-page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #0f0f1a;
+}
+.chat-header {
+  padding: 1rem 2rem;
+  text-align: center;
+  border-bottom: 1px solid #333;
+  color: #e9d5ff;
+}
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+}
+.message {
+  margin: 1rem 0;
+  display: flex;
+  justify-content: flex-start;
+}
+.message.assistant {
+  justify-content: flex-end;
+}
+.bubble {
+  max-width: 70%;
+  padding: 1rem 1.5rem;
+  border-radius: 18px;
+  background: #a78bfa33;
+  border: 1px solid #a78bfa44;
+}
+.message.user .bubble {
+  background: #1e1e2e;
+  border: 1px solid #444;
+}
+.empty-chat {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+}
+.chat-input {
+  display: flex;
+  padding: 1rem;
+  border-top: 1px solid #333;
+  gap: 0.5rem;
+}
